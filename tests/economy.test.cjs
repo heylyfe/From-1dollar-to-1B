@@ -141,3 +141,31 @@ test('catalog meets content minimums and strategies can complete using the share
     assert.ok(result.won,name+' reached '+result.worth);
   }
 });
+test('deals expire and rival acquisitions conserve capital',()=>{
+  const {g,b}=funded();
+  assert.equal(E.sign(g,b,1),false);
+  b.rep=70;
+  const before=E.getTerms(g,b);
+  assert.ok(E.sign(g,b,1));
+  assert.ok(E.getTerms(g,b).materials<before.materials);
+  assert.equal(E.sign(g,b,1),false);
+  g.round+=16;
+  assert.equal(E.getTerms(g,b).materials,before.materials);
+  g.rivals[0][0]=6000;
+  assert.equal(E.acquireRival(g,0,0),false);
+  g.tech.push(46);
+  const cash=g.cash;
+  const price=E.mergerQuote(g,0,0);
+  assert.ok(E.acquireRival(g,0,0));
+  assert.equal(g.cash,cash-price);
+  assert.ok(g.rivals[0][0]<6000);
+  assert.ok(S.decode(S.encode(g)));
+});
+test('the single-industry restriction survives disposal of the original site',()=>{
+  const g=E.newGame(9,'Standard',1);
+  g.cash=900000;
+  const b=E.buy(g,0,0);
+  assert.ok(E.sell(g,b));
+  assert.equal(E.buy(g,4,0),false);
+  assert.ok(E.buy(g,0,0));
+});
