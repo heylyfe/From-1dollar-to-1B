@@ -1,51 +1,47 @@
-# Balancing report
+# Real-time campaign balance
 
-## Model
+## What the clock measures
 
-All currency is stored in integer cents. Each trading period uses the same formulas in the game and in the simulation.
+The game runs at fixed 50 ms simulation steps. Movement uses distance, speed and collision. Starter orders require pickup, processing or service, and a waiting customer. The simulator walks the same paths to open the first business, works that business for one minute, then continues with the same one-second off-screen operations and 44-second settlement clock used by the browser.
 
-- Actual sales are the smaller of effective capacity and effective demand. Equipment, floor space, crew, maintenance and automation determine capacity. Region, season, competition, marketing, price and reputation determine demand.
-- Revenue comes from units sold and their price. Costs include materials, payroll, overhead and interest. Suppliers, clean energy and research reduce selected costs.
-- Net worth is cash plus property book value and 76–95% of capital invested in each business, less debt. A business sells for 87% of its quoted valuation, so a buy-and-sell cycle destroys value.
-- A campaign win requires $1 billion in net worth, at least two businesses, positive trading profit and debt at or below 20% of net worth. Challenges may add conditions.
-- Offline income applies to automated sites only. The return is a fraction of a regular period for each five minutes away, capped at 24 credited periods.
+Staffed throughput depends on the workstations in the route, crew size, training, equipment, automation and wear. Site demand depends on the sector, region, price and market. Crowding reduces customer arrivals once a district contains more than six sites. A bounded backlog keeps excess demand from becoming a future windfall. Orders settle at integer-cent prices from the portfolio economy, and shifts charge wages and overhead.
 
-## Seeded results
+The agents reinvest at shift boundaries, follow a reserve policy, and pursue the designated industry constraints. The reported clock omits menu deliberation, breaks, and offline income. A win requires $1 billion in net worth, at least two businesses, positive recent operating profit and manageable debt.
 
-The run used 128 campaigns per profile, for 1,536 total. Profiles use Standard difficulty with different cash reserves, sectors and investment policies. Automated agents review investments every fourth period, research periodically and choose trading plans by estimated operating profit. Offline income was excluded from estimated hours.
+## Results
 
-Estimated hours assume one minute per closed period and four seconds per shift. The game uses turn-based trading, and players control how quickly they close periods. These estimates do not establish real session duration or enjoyment.
+36 of 36 seeded runs reached $1 billion within a 45-hour simulated horizon. All runs used Standard difficulty and the profile’s specified challenges or portfolio rules.
 
-| Profile | Wins | Median periods to win | Estimated hours | Median ending net worth |
+| Profile | Wins | First operated shop, minutes | Median hours to $1B | Median businesses |
 | --- | ---: | ---: | ---: | ---: |
-| Casual | 128/128 | 1,719 | 28.7 | $1,002,162,085 |
-| Aggressive | 128/128 | 1,005 | 16.8 | $1,014,808,232 |
-| Conservative | 128/128 | 2,127 | 35.5 | $1,001,511,836 |
-| Optimised | 128/128 | 1,013 | 16.9 | $1,017,494,150 |
-| Hospitality | 128/128 | 1,221 | 20.4 | $1,012,340,052 |
-| Technology | 128/128 | 1,001 | 16.7 | $1,014,909,837 |
-| Manufacturing | 128/128 | 1,445 | 24.1 | $1,011,442,458 |
-| Retail | 128/128 | 1,445 | 24.1 | $1,010,750,075 |
-| Diversified | 128/128 | 1,113 | 18.6 | $1,014,630,814 |
-| Offline reliant | 128/128 | 1,727 | 28.8 | $1,001,909,812 |
-| Poor decisions | 0/128 | — | — | $67,506 |
-| Resale loop | 0/128 | — | — | $154,616 |
+| Diversified | 4/4 | 5.5 | 21.16 | 44 |
+| Fast expansion | 4/4 | 2.6 | 20.43 | 44 |
+| Conservative | 4/4 | 3.9 | 21.22 | 44 |
+| Hospitality | 4/4 | 5.5 | 23.69 | 27 |
+| Retail | 4/4 | 2.6 | 19.75 | 27 |
+| Logistics | 4/4 | 2.6 | 23.07 | 27 |
+| Technology | 4/4 | 3.7 | 22.10 | 27 |
+| Manufacturing | 4/4 | 2.8 | 31.04 | 27 |
+| Small town | 4/4 | 5.8 | 22.73 | 27 |
 
-Median milestone periods are shown below for representative profiles.
+### Median hours to milestones
 
 | Profile | $100 | $1K | $10K | $100K | $1M | $10M | $100M | $1B |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Casual | 28 | 93 | 188 | 402 | 610 | 855 | 1,210 | 1,719 |
-| Conservative | 35 | 100 | 190 | 455 | 695 | 1,016 | 1,456 | 2,127 |
-| Optimised | 25 | 89 | 175 | 264 | 412 | 598 | 853 | 1,013 |
-| Technology | 32 | 77 | 152 | 260 | 400 | 579 | 842 | 1,001 |
-| Diversified | 25 | 89 | 176 | 270 | 419 | 630 | 909 | 1,113 |
+| Diversified | 0.22 | 0.35 | 0.78 | 1.95 | 4.39 | 10.54 | 18.72 | 21.16 |
+| Fast expansion | 0.24 | 0.39 | 0.79 | 1.86 | 4.18 | 10.17 | 17.94 | 20.43 |
+| Conservative | 0.27 | 0.43 | 0.86 | 1.95 | 4.55 | 10.65 | 18.78 | 21.22 |
+| Hospitality | 0.23 | 0.36 | 0.85 | 1.90 | 4.98 | 12.20 | 21.36 | 23.69 |
+| Retail | 0.20 | 0.37 | 0.92 | 1.91 | 4.44 | 9.82 | 17.25 | 19.75 |
+| Logistics | 0.25 | 0.45 | 1.13 | 2.28 | 5.30 | 11.89 | 20.67 | 23.07 |
+| Technology | 0.33 | 0.55 | 1.41 | 2.78 | 5.67 | 12.32 | 20.29 | 22.10 |
+| Manufacturing | 0.38 | 0.65 | 1.59 | 3.26 | 7.04 | 16.25 | 27.96 | 31.04 |
+| Small town | 0.24 | 0.38 | 0.80 | 2.12 | 5.17 | 14.03 | 20.34 | 22.73 |
 
-## Adjustments and remaining evidence
+## Tuning and limitations
 
-- Initial trials exposed a stalled jump into the third business tier and a slow path to $100. Stronger local profits, revised tier gates and smaller endgame operating payouts shifted growth toward early ownership and a longer late game.
-- Ten policy profiles won all their runs. The poor-decisions profile triggered emergency borrowing in 16 runs and had zero wins. The resale stress test lost a median $776,732 through sales and reacquisitions and had zero wins.
-- The successful profile medians range from 16.7 to 35.5 modelled hours. Several routes fall below the 20-hour target at the assumed pace, and passive repetition can further reduce actual play time.
-- The agents exercise operating plans, acquisitions, upgrades, research and contracts. They do not measure human reactions, satisfaction, device performance, all difficulty combinations or post-game engagement. A larger seeded sweep and timed human playtests are outstanding.
+- Early iterations paid too much for high-tier contracts. The revised price scale distinguishes local service, regional work, industrial orders and global contracts. Sector adjustments support manufacturing, whose inputs are more costly. District saturation rewards opening new markets and raises the cost of concentrating an entire portfolio in one town.
+- Profile medians ranged from 19.75 to 31.04 simulated hours. This run uses four seeds per profile. The 20-hour minimum and 25–35 hour normal-play targets need timed player sessions. Some simulated routes may fall below those targets, and the richness of a multi-hour campaign cannot be measured by order counts alone.
+- The agent walks through the starter and first storefront. Later sites use the remote operations model. The estimates omit travel after the opening, strategic deliberation and human movement mistakes. They do not establish physical-device performance or post-game pacing.
 
-The [aggregated run data](tests/results/balance-128.json) includes median revenue, operating profit, upgrades, loss periods, recoveries and milestone rounds. Reproduce it with `node tests/simulate.cjs 128`. The runner also supports 1,000 or more seeds per profile.
+Reproduce the run with `node tests/simulate.cjs 4 45`. See [real-time run data](tests/results/realtime-balance.json) for the aggregate order counts, financial outcomes, and milestone timings. The [legacy run](tests/results/balance-128.json) belongs to the former turn-based game.

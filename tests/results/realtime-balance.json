@@ -1,0 +1,191 @@
+[
+  {
+    "profile": "Diversified",
+    "samples": 4,
+    "wins": 4,
+    "hours": 21.16,
+    "milestoneHours": [
+      0.22,
+      0.35,
+      0.78,
+      1.95,
+      4.39,
+      10.54,
+      18.72,
+      21.16
+    ],
+    "firstShopMinutes": 5.5,
+    "net": 102683512037,
+    "sites": 44,
+    "orders": 621986,
+    "losses": 0
+  },
+  {
+    "profile": "Fast expansion",
+    "samples": 4,
+    "wins": 4,
+    "hours": 20.43,
+    "milestoneHours": [
+      0.24,
+      0.39,
+      0.79,
+      1.86,
+      4.18,
+      10.17,
+      17.94,
+      20.43
+    ],
+    "firstShopMinutes": 2.6,
+    "net": 102410520724,
+    "sites": 44,
+    "orders": 625449,
+    "losses": 0
+  },
+  {
+    "profile": "Conservative",
+    "samples": 4,
+    "wins": 4,
+    "hours": 21.22,
+    "milestoneHours": [
+      0.27,
+      0.43,
+      0.86,
+      1.95,
+      4.55,
+      10.65,
+      18.78,
+      21.22
+    ],
+    "firstShopMinutes": 3.9,
+    "net": 101779724551,
+    "sites": 44,
+    "orders": 639566,
+    "losses": 0
+  },
+  {
+    "profile": "Hospitality",
+    "samples": 4,
+    "wins": 4,
+    "hours": 23.69,
+    "milestoneHours": [
+      0.23,
+      0.36,
+      0.85,
+      1.9,
+      4.98,
+      12.2,
+      21.36,
+      23.69
+    ],
+    "firstShopMinutes": 5.5,
+    "net": 102059227311,
+    "sites": 27,
+    "orders": 594914,
+    "losses": 0
+  },
+  {
+    "profile": "Retail",
+    "samples": 4,
+    "wins": 4,
+    "hours": 19.75,
+    "milestoneHours": [
+      0.2,
+      0.37,
+      0.92,
+      1.91,
+      4.44,
+      9.82,
+      17.25,
+      19.75
+    ],
+    "firstShopMinutes": 2.6,
+    "net": 101639259025,
+    "sites": 27,
+    "orders": 654582,
+    "losses": 0
+  },
+  {
+    "profile": "Logistics",
+    "samples": 4,
+    "wins": 4,
+    "hours": 23.07,
+    "milestoneHours": [
+      0.25,
+      0.45,
+      1.13,
+      2.28,
+      5.3,
+      11.89,
+      20.67,
+      23.07
+    ],
+    "firstShopMinutes": 2.6,
+    "net": 100675978750,
+    "sites": 27,
+    "orders": 580296,
+    "losses": 0
+  },
+  {
+    "profile": "Technology",
+    "samples": 4,
+    "wins": 4,
+    "hours": 22.1,
+    "milestoneHours": [
+      0.33,
+      0.55,
+      1.41,
+      2.78,
+      5.67,
+      12.32,
+      20.29,
+      22.1
+    ],
+    "firstShopMinutes": 3.7,
+    "net": 103066920669,
+    "sites": 27,
+    "orders": 461148,
+    "losses": 0
+  },
+  {
+    "profile": "Manufacturing",
+    "samples": 4,
+    "wins": 4,
+    "hours": 31.04,
+    "milestoneHours": [
+      0.38,
+      0.65,
+      1.59,
+      3.26,
+      7.04,
+      16.25,
+      27.96,
+      31.04
+    ],
+    "firstShopMinutes": 2.8,
+    "net": 102367795066,
+    "sites": 27,
+    "orders": 671535,
+    "losses": 0
+  },
+  {
+    "profile": "Small town",
+    "samples": 4,
+    "wins": 4,
+    "hours": 22.73,
+    "milestoneHours": [
+      0.24,
+      0.38,
+      0.8,
+      2.12,
+      5.17,
+      14.03,
+      20.34,
+      22.73
+    ],
+    "firstShopMinutes": 5.8,
+    "net": 101317785659,
+    "sites": 27,
+    "orders": 416738,
+    "losses": 0
+  }
+]
