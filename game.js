@@ -1,13 +1,12 @@
 "use strict";
 (() => {
-  const C=Catalog,E=Economy,S=Saves;
+  const C=Catalog,E=Economy,F=FieldData,O=Operations,S=Saves;
   const $=s=>document.querySelector(s);
-  const dollars=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
-  const money=n=>Math.abs(n)>=1e8?compact(n):dollars.format(n/100);
-  const compact=n=> {
-    const abs=Math.abs(n/100), units=[[1e12,'T'],[1e9,'B'],[1e6,'M'],[1e3,'K']];
-    const unit=units.find(([cut])=>abs>=cut);
-    return unit?(n<0?'−':'')+'$'+(abs/unit[0]).toLocaleString('en-US',{maximumFractionDigits:2})+unit[1]:dollars.format(n/100);
+  const usd=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
+  const money=n=> {
+    const tiers=[[1e14,'T'],[1e11,'B'],[1e8,'M'],[1e5,'K']];
+    const unit=tiers.find(([v])=>Math.abs(n)>=v);
+    return unit?(n<0?'−':'')+'$'+(Math.abs(n)/unit[0]).toLocaleString('en-US',{maximumFractionDigits:2})+unit[1]:usd.format(n/100);
   };
   const art={
     empire:'<path d="M3 20h18M5 20V9l7-5 7 5v11M9 20v-5h6v5M9 10h6"/>',
@@ -35,346 +34,599 @@
     wrench:'<path d="M20 7a5 5 0 0 1-6 6l-7 7a2 2 0 1 1-3-3l7-7a5 5 0 0 1 6-6l-3 3 2 3 4-3Z"/>',
     close:'<path d="m6 6 12 12M18 6 6 18"/>',
     check:'<path d="m5 12 4 4L19 6"/>',
+    box:'<path d="m12 3 9 5v8l-9 5-9-5V8l9-5Zm-9 5 9 5 9-5m-9 5v8m-4-16 9 5"/>',
+    cup:'<path d="M4 6h13v7a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V6Zm13 2h2a2 2 0 0 1 0 4h-2M4 21h15"/>',
+    bed:'<path d="M3 4v16m18-2v2M3 15h18v3H3m3-3V9h12a3 3 0 0 1 3 3v3"/>',
+    sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l2 2m10 10 2 2M19 5l-2 2M7 17l-2 2"/>',
+    move:'<path d="M12 3v18M3 12h18M9 6l3-3 3 3M6 9l-3 3 3 3m3 3 3 3 3-3m3-9 3 3-3 3"/>',
+    plus:'<path d="M12 5v14M5 12h14"/>',
     info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>'
   };
   const icon=(name,size=20)=>'<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(art[name]||art.building)+'</svg>';
-  let opts={slot:0,music:0,fx:.28,motion:true,completed:0,fastest:0,legacy:0,...S.meta()};
-  let lastAction=0;
-  let g, tab='Empire', region=0, branch=0, selected=null, slotRequest=0, toastTimer, audio, score, musicStep=0, awayAt=0, savedFocus=null;
-  const pages=[['Empire','empire'],['Businesses','building'],['World','world'],['Research','flask'],['Finance','coins']];
-  const dialog=$('#dialog');
-  function loadSlot(i){
-    lastAction=0;opts.slot=i;const saved=S.getSlot(i);g=saved||E.newGame();region=g.home;selected=null;
-    const away=saved?E.offline(g,Date.now()-g.stamp):null;
-    save();return away;
+  const canvas=$('#world'), dialog=$('#dialog'), renderer=WorldRenderer.create(canvas);
+  const input={x:0,y:0}, keys=new Set(), reduced=matchMedia('(prefers-reduced-motion: reduce)');
+  const prefs=S.meta();
+  const settings={slot:[0,1,2].includes(prefs.slot)?prefs.slot:0,
+    sound:Number.isFinite(prefs.sound)?Math.max(0,Math.min(1,prefs.sound)):.30,
+    motion:prefs.motion!==false,legacy:Number.isInteger(prefs.legacy)?prefs.legacy:0,
+    completed:Number.isInteger(prefs.completed)?prefs.completed:0,fastest:Number.isInteger(prefs.fastest)?prefs.fastest:0};
+  const starterKeys=['lemonade','wash','delivery'];
+  let g,s,job='lemonade',guide,modal='',dirty=true,last=0,acc=0,hudClock=0,autosaveClock=0,guideClock=0;
+  let selection={region:0,branch:0,sector:0,plot:0,site:0,slot:0,plus:false};
+  let contextKey='', zoneKey='', inventoryKey='', toastTimer=0, previousFocus=null, hiddenAt=0, soundEngine;
+  let drag=null;
+  let tutorial={supply:false,batch:false,sales:0};
+  const press=(label,action,value='',kind='secondary',disabled=false)=>'<button type="button" class="btn '+kind+'" data-action="'+action+'" data-value="'+value+'"'+(disabled?' disabled':'')+'>'+label+'</button>';
+  const title=(name,description='')=>'<h3>'+name+'</h3>'+(description?'<p class="muted">'+description+'</p>':'');
+  const badge=text=>'<span class="badge">'+text+'</span>';
+  const row=(label,value)=>'<div class="data-row"><span>'+label+'</span><strong>'+value+'</strong></div>';
+  const rule=(label,detail,button='')=>'<div class="menu-row"><div><strong>'+label+'</strong><small>'+detail+'</small></div>'+button+'</div>';
+  const section=(label,content)=>'<section class="sheet-section">'+title(label)+content+'</section>';
+  const business=()=>s.map.business;
+  const stats=(label,val,art,id)=>'<div class="stat">'+icon(art,16)+'<span><small>'+label+'</small><strong id="'+id+'">'+val+'</strong></span></div>';
+  const roundProfit=()=>g.last.profit;
+  function sound(type){
+    if(!settings.sound)return;
+    try{
+      soundEngine||=new (window.AudioContext||window.webkitAudioContext)();
+      if(soundEngine.state==='suspended')soundEngine.resume().catch(()=>{});
+      const notes={sale:[523,690,830],build:[330,440,587],tap:[440],pickup:[460],won:[392,523,659,784]}[type]||[440];
+      for(let i=0;i<notes.length;i++){
+        const time=soundEngine.currentTime+i*.055,osc=soundEngine.createOscillator(),volume=soundEngine.createGain();
+        osc.type='triangle';osc.frequency.value=notes[i];
+        volume.gain.setValueAtTime(settings.sound*.08,time);
+        volume.gain.exponentialRampToValueAtTime(.0001,time+.13);
+        osc.connect(volume).connect(soundEngine.destination);osc.start(time);osc.stop(time+.13);
+      }
+    }catch{}
+  }
+  function announce(message,art='check'){
+    const el=$('#toast');el.innerHTML=icon(art,18)+'<span></span>';el.lastElementChild.textContent=message;
+    el.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),2850);
+  }
+  function emit(type,data){
+    if(type==='sale'){
+      tutorial.sales++;
+      if(!data.worker&&s.popups.length<5)sound('sale');
+      dirty=true;
+    }
+    if(type==='pickup'&&s.site===0){
+      if(data.item==='lemon')tutorial.supply=true;
+      if(data.item==='drink')tutorial.batch=true;
+      if(!data.worker)sound('pickup');
+      dirty=true;
+    }
+    if(type==='built'){announce(C.businesses[data.business.type].name+' is open','building');sound('build');dirty=true;}
+    if(type==='annex'){announce('The new floor is open','building');sound('build');dirty=true;}
+    if(type==='construction'||type==='townBuilt'){sound('build');dirty=true;}
+    if(type==='market'){announce(data.event[0]+' · '+data.event[1],'chart');dirty=true;}
+    if(type==='milestone')announce(data.text,'trophy');
+    if(type==='scene'){dirty=true;contextKey='';zoneKey='';guide=null;}
+    if(type==='shift')dirty=true;
   }
   function save(){
+    g.field=O.snapshot(s);
     g.stamp=Math.max(g.stamp,Date.now());
-    S.store(opts.slot,g);S.settings(opts);
+    S.store(settings.slot,g);S.settings(settings);
   }
-  function notify(text){
-    const el=$('#toast');el.innerHTML=icon('check',17)+'<span></span>';el.querySelector('span').textContent=text;
-    el.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),2900);
+  function load(slot,fresh=null){
+    settings.slot=slot;
+    const saved=fresh?null:S.getSlot(slot);
+    g=fresh||saved||E.newGame();
+    const elapsed=saved?Date.now()-g.stamp:0;
+    const offline=elapsed>0?O.fieldOffline(g,elapsed):null;
+    s=O.create(g,emit);
+    if(!g.field&&g.played)s.elapsed=g.played;
+    tutorial={supply:g.worked>0,batch:g.worked>0,sales:g.worked};
+    job=starterKeys[g.job]||'lemonade';
+    guide=O.suggest(s,job);
+    selection={region:s.region,branch:0,sector:0,plot:0,site:s.site,slot,plus:false};
+    hiddenAt=0;acc=0;guideClock=0;contextKey='';inventoryKey='';zoneKey='';dirty=true;
+    save();
+    return offline;
   }
-  function sound(kind='tap'){
-    if(!opts.fx)return;
-    try{
-      audio ||= new (window.AudioContext||window.webkitAudioContext)();
-      if(audio.state==='suspended')audio.resume().catch(()=>{});
-      const notes={tap:[440],buy:[440,660,880],win:[392,523,659,784],work:[520,700]}[kind];
-      notes.forEach((note,i)=>tone(note,audio.currentTime+i*.065,.10,opts.fx*.16,'triangle'));
-    }catch{}
+  function wins(){
+    if(g.won&&!g.winLogged){
+      g.winLogged=true;
+      settings.completed++;
+      settings.legacy++;
+      const time=g.completedAt||g.played;
+      settings.fastest=settings.fastest?Math.min(settings.fastest,time):time;
+      announce('Your portfolio reached a sustainable $1 billion!','trophy');sound('won');
+      save();
+    }
+    for(let i=0;i<E.achievements.length;i++){
+      if(!g.achievements.includes(i)&&E.achievements[i][2](g))g.achievements.push(i);
+    }
   }
-  function tone(freq,start,length,volume,type){
-    const o=audio.createOscillator(), gain=audio.createGain();
-    o.type=type;o.frequency.value=freq;
-    gain.gain.setValueAtTime(Math.max(.0001,volume),start);
-    gain.gain.exponentialRampToValueAtTime(.0001,start+length);
-    o.connect(gain).connect(audio.destination);o.start(start);o.stop(start+length);
+
+  function objective(){
+    const b=business(), owns=g.businesses.length;
+    if(b){
+      const r=s.map.recipe;
+      if(!b.staff)return ['Run the '+r.label.toLowerCase(),'Fill orders yourself. Hire a worker from the office to keep it operating when you leave.',icon('users',18)];
+      if(!b.up[1])return ['Make room to grow','The expansion pad adds a new station. Your crew can keep the original line moving.',icon('building',18)];
+      return ['Keep orders flowing',r.hint,icon(r.icon,18)];
+    }
+    if(!s.map.starters)return ['Find your next site','Walk to a lot to build. Follow the bus sign to change districts.',icon('building',18)];
+    if(!owns&&g.worked<3)return ['Your first orders',F.recipes[job].hint,icon(F.recipes[job].icon,18)];
+    if(!owns){
+      const min=Math.min(...C.businesses.filter(d=>d.tier===0&&E.canBuy(g,d.id,s.region)).map(d=>E.quote(g,d.id,s.region)));
+      return ['Open your first shop','Save '+money(min)+' for a storefront. Walk to a construction lot to choose your business.',icon('building',18)];
+    }
+    if(g.regions.length<2&&g.challenge!==2)return ['Grow beyond Maplebrook','Hire staff, open another business, then buy a permit for Cedar Junction at '+money(C.regions[1].gate)+' net worth.',icon('world',18)];
+    return [g.won?'Grow your legacy':'Build a billion-dollar group','Keep profitable sites running and reinvest in larger industries.',icon('chart',18)];
   }
-  function music(){
-    clearInterval(score);
-    if(!opts.music||document.hidden)return;
-    try{
-      audio ||= new (window.AudioContext||window.webkitAudioContext)();
-      if(audio.state==='suspended')audio.resume().catch(()=>{});
-      const seq=[261.63,329.63,392,523.25,293.66,349.23,440,587.33,220,261.63,329.63,440,196,246.94,293.66,392];
-      score=setInterval(()=>tone(seq[musicStep++%seq.length],audio.currentTime,1.5,opts.music*.07,'sine'),560);
-    }catch{}
+  function renderChrome(){
+    const b=business(), theme=s.map.theme, id=s.region+':'+s.site;
+    if(zoneKey!==id){
+      zoneKey=id;
+      $('#location').textContent=b?C.businesses[b.type].name:theme.label;
+      $('#zone').textContent=b?theme.label.toUpperCase()+' / '+C.sectors[C.businesses[b.type].sector].name.toUpperCase():theme.zone;
+      $('#scene-tag').innerHTML=icon('sun',16)+(b?'Open for business':'Open district');
+    }
+    $('#cash').textContent=money(g.cash);
+    $('#worth').textContent=money(E.worth(g));
+    $('#profit').textContent=money(roundProfit());
+    $('#orders-count').textContent=s.served+' '+(s.served===1?'order':'orders')+' fulfilled';
+    const item=s.player.item, count=s.player.count,cap=O.capacity(s,F.recipes[job]);
+    const ik=item+':'+count+':'+cap;
+    if(inventoryKey!==ik){
+      inventoryKey=ik;
+      const label=icon('box',17)+'<span>'+(item?F.item[item][0]:'Carry')+'</span><strong>'+count+'/'+cap+'</strong>';
+      $('#inventory').innerHTML=item?press(label,'inventory','','inventory-button'):label;
+      $('#inventory').classList.toggle('loaded',Boolean(item));
+    }
+    const st=s.focus;
+    let action=st?.kind==='action'?st:null;
+    let hint=st?O.actionHint(s,st):s.player.item?'Carry your items to the highlighted station':'Walk to a station to work';
+    if(action?.building){hint='Building in progress';action=null;}
+    const actKey=hint+':'+(action?.id||'')+':'+Boolean(st);
+    if(contextKey!==actKey){
+      contextKey=actKey;
+      $('#context').innerHTML=action?press(icon('arrow',15)+hint+'<kbd>E</kbd>','context','','action'):st?'<span>'+icon('target',15)+hint+'</span>':'';
+    }
+    if(dirty)renderBook();
   }
-  const btn=(label,act,args=[],options={})=>'<button type="button" class="'+(options.class||'button')+'" data-act="'+act+'" data-args="'+args.join(',')+'"'+(options.disabled?' disabled':'')+'>'+label+'</button>';
-  const badge=(text,kind='')=>'<span class="badge '+kind+'">'+text+'</span>';
-  const panel=(title,body,kicker='')=>'<section class="panel"><div class="section-head">'+(kicker?'<span>'+kicker+'</span>':'')+'<h2>'+title+'</h2></div>'+body+'</section>';
-  const percent=(n,max)=>Math.max(0,Math.min(100,n/max*100));
-  const progress=(v,max)=>'<div class="progress" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.floor(percent(v,max))+'"><i style="width:'+percent(v,max)+'%"></i></div>';
-  function nextObjective(){
-    if(!g.worked)return ['Earn your first dollar','Run a shift at the lemonade stand.',0,1];
-    if(!g.tools.some(Boolean)&&!g.businesses.length)return ['Upgrade your kit','A better kit increases earnings on every shift.',g.cash,150];
-    if(!g.businesses.length)return ['Open your first business','Save enough cash to acquire a storefront.',g.cash,C.businesses[0].cost];
-    if(!g.staffHired)return ['Hire your first employee','Open your storefront and add a crew member.',0,1];
-    if(!g.businesses.some(b=>b.up[7])&&!g.skipTutorial)return ['Automate a business','Hire staff and reach $40 net worth to install automation.',E.worth(g),4000];
-    if(g.regions.length===1&&g.challenge!==2)return ['Expand to Cedar Junction','Acquire a regional permit on the World map.',E.worth(g),C.regions[1].gate];
-    const next=C.milestones.find(n=>n>E.worth(g));
-    return next?['Reach '+compact(next)+' in net worth','Reinvest profits and grow the value of your holdings.',E.worth(g),next]:
-      ['Build your legacy','Complete corporate projects and industry masteries.',g.projects.length,E.projects.length];
-  }
-  function summary(label,value,name,tint=''){
-    return '<div class="metric"><div class="metric-icon '+tint+'">'+icon(name,20)+'</div><div><span>'+label+'</span><strong>'+value+'</strong></div></div>';
-  }
-  function renderTop(){
-    $('#top').innerHTML='<div class="top-inner"><div class="brand"><img src="./assets/emblem.svg" width="43" height="43" alt=""><div><strong>From $1 to $1 Billion</strong><small>BUSINESS TYCOON</small></div></div><div class="top-actions">'+badge(icon('calendar',15)+' Period '+(g.round+1),'top-badge')+btn(icon('trophy')+'<span class="sr">Achievements</span>','awards',[],{class:'icon-button'})+btn(icon('settings')+'<span class="sr">Settings</span>','settings',[],{class:'icon-button'})+'</div></div>';
-    $('#nav').innerHTML='<div class="nav-inner">'+pages.map(([label,name])=>'<button type="button" data-act="nav" data-args="'+label+'" '+(tab===label?'aria-current="page"':'')+'>'+icon(name,21)+'<span>'+label+'</span></button>').join('')+'</div>';
-  }
-  function town(){
-    const r=C.regions[g.home];
-    return '<div class="town"><img class="town-image" src="./assets/maplebrook.webp" alt="A lemonade stand in a lantern-lit town square, beside shops and a winding street"><div class="town-mark">'+icon('pin',15)+r.name+'</div><div class="firefly f1"></div><div class="firefly f2"></div><div class="firefly f3"></div><div class="town-caption"><span><i></i> LOCAL MARKET OPEN</span><strong>'+r.name+'</strong><p>'+r.kind+' · '+(g.businesses.length?g.businesses.length+' businesses in your portfolio':'Your first neighbourhood')+'</p></div></div>';
-  }
-  function jobBoard(){
-    return panel('Local jobs','<p class="intro">Take a shift to earn cash for your first business.</p><div class="job-list">'+C.jobs.map((j,i)=>{
-      const locked=g.worked<[0,3,8][i];
-      return btn('<span class="job-icon j'+i+'">'+icon(j.icon,21)+'</span><span class="job-copy"><strong>'+j.name+'</strong><small>'+(locked?'Unlocks after '+[0,3,8][i]+' shifts':i===0?'Make and sell lemonade':i===1?'Walk dogs around town':'Deliver orders by bike')+'</small></span><span class="job-end">'+(locked?icon('lock',16):icon('arrow',17))+'</span>','jobView',[i],{class:'job-row',disabled:locked});
-    }).join('')+'</div>'+btn(icon('wrench',17)+' Upgrade job equipment','tools',[],{class:'button outline full'}),'MAPLEBROOK JOB BOARD');
-  }
-  function empire(){
-    const net=E.worth(g), total=E.aggregate(g), [title,desc,v,max]=nextObjective();
+  function renderBook(){
+    dirty=false;
+    const [headline,detail,emblem]=objective();
+    const b=business(), local=s.map.starters,r=local?F.recipes[job]:s.map.recipe;
+    const first=!g.worked&&local;
+    const requirements=job==='lemonade'?[
+      ['Collect lemons',tutorial.supply],['Mix and collect lemonade',tutorial.batch],['Serve a customer',tutorial.sales>0]
+    ]:job==='wash'?[['Pick up a wash kit',s.player.item==='soap'],['Wash a waiting car',tutorial.sales>0]]:[['Pick up a parcel',s.player.item==='parcel'],['Deliver to a lit doorstep',tutorial.sales>0]];
+    const steps=(local&&g.worked<3)?'<ol class="steps">'+requirements.map(([label,done],i)=>'<li class="'+(done?'done':'')+'"><i>'+(done?icon('check',12):i+1)+'</i>'+label+'</li>').join('')+'</ol>':'';
+    const guideButton=first?press(icon('arrow',16)+' Show me where','guide','','primary'):
+      (r?press(icon('target',17)+' Next workstation','guide','','secondary'):'');
+    const jobs=local?'<div class="job-pickers">'+starterKeys.map((key,i)=>{
+      const r=F.recipes[key];
+      return '<button type="button" class="job-pick '+(job===key?'selected':'')+'" data-action="job" data-value="'+key+'" aria-pressed="'+(job===key)+'"><span class="job-art job-'+i+'">'+icon(r.icon,18)+'</span><span><strong>'+r.label+'</strong><small>'+(i===0?'Mix and serve':i===1?'Clean waiting cars':'Take parcels to doors')+'</small></span>'+icon('arrow',14)+'</button>';
+    }).join('')+'</div>':'';
+    const rec=b?O.record(s,b):null;
+    const siteCard=b?'<section class="paper"><div class="paper-label">ON SITE</div><div class="quick-data">'+row('Orders fulfilled',rec.done)+row('Crew on duty',String(b.staff))+row('Reputation',Math.round(b.rep)+'%')+'</div>'+press(icon('building',17)+' Manage business','manage',b.id,'secondary full')+'</section>':
+      local?'<section class="paper work-card"><div class="paper-label">LOCAL JOBS</div>'+jobs+'</section>':
+      '<section class="paper"><div class="paper-label">DISTRICT</div>'+title(s.map.theme.label,C.regions[s.region].kind)+press(icon('pin',17)+' Find construction lot','findLot','','secondary full')+'</section>';
     const event=C.events[g.event];
-    const objective='<div class="objective"><div class="objective-icon">'+icon('target',24)+'</div><div class="objective-copy"><span>NEXT OBJECTIVE</span><strong>'+title+'</strong><small>'+desc+'</small></div><div class="objective-progress"><span>'+Math.floor(percent(v,max))+'%</span>'+progress(v,max)+'</div></div>';
-    const sidebar=g.businesses.length?panel('Trading desk','<p class="intro">Review conditions, choose an operating plan and close the period to collect your profit.</p>'+rulesList()+btn(icon('check',18)+' Close period · '+money(total.profit),'closePeriod',[],{class:'button primary full'})+btn('Find side work','sideWork',[],{class:'button text full'})):jobBoard();
-    return '<div class="page-heading"><div><span class="overline">EMPIRE OVERVIEW</span><h1>Your empire</h1><p>Manage your businesses and track your progress toward $1 billion.</p></div>'+badge(g.won?'Billionaire':g.mode+' campaign','mode')+'</div>'+
-      '<div class="metrics">'+summary('Cash balance',money(g.cash),'coins','mint')+summary('Net worth',money(net),'chart','mint')+summary('Profit / period',money(total.profit),'bolt','gold')+summary('Businesses',String(g.businesses.length),'building','lilac')+'</div>'+
-      '<div class="layout"><div>'+town()+objective+'</div><aside>'+sidebar+'</aside></div>'+
-      '<div class="below layout">'+panel('Market bulletin','<div class="bulletin"><div class="metric-icon gold">'+icon('chart')+'</div><div><strong>'+event[0]+'</strong><p>'+event[1]+'</p></div>'+badge(event[5]==='neutral'?'Stable':event[5]==='positive'?'Growth':'Slowdown',event[5])+'</div>')+
-      (g.businesses.length?contractPanel():panel('Your first storefront','<p class="intro">Compare local business listings and pick where to invest your first earnings.</p>'+btn('Browse businesses '+icon('arrow',15),'nav',['Businesses'],{class:'button outline full'})))+'</div>';
+    $('#fieldbook').innerHTML='<section class="paper objective"><div class="objective-top"><span class="objective-icon">'+emblem+'</span><span class="paper-label">CURRENT OBJECTIVE</span></div>'+title(headline,detail)+steps+guideButton+'</section>'+siteCard+
+      '<div class="market-note">'+icon(event[5]==='negative'?'chart':'sun',16)+'<div><strong>'+event[0]+'</strong><small>'+event[1]+'</small></div></div>';
   }
-  function rulesList(){
-    return '<div class="rule-list">'+E.rules.map((rule,i)=>btn('<span><strong>'+rule.name+'</strong><small>'+rule.detail+'</small></span><b>'+money(E.aggregate(g,i).profit)+'</b>','policy',[i],{class:'rule '+(g.policy===i?'chosen':'')})).join('')+'</div>';
+  function layout(){
+    $('#header-actions').innerHTML='<span class="live-status"><i></i> LIVE SIMULATION</span>'+press(icon('trophy',19)+'<span class="sr">Achievements</span>','achievements','','icon')+press(icon('settings',19)+'<span class="sr">Settings</span>','settings','','icon');
+    $('#stats').innerHTML=stats('Cash balance',money(g.cash),'coins','cash')+stats('Net worth',money(E.worth(g)),'trophy','worth')+stats('Last shift profit',money(roundProfit()),'chart','profit');
+    $('#move-help').innerHTML=icon('move',15)+'<span class="key-help"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or click to move</span><span class="touch-help">Drag or tap to move</span>';
+    $('.nav-inner').innerHTML=[['Play','empire','play'],['Businesses','building','portfolio'],['Districts','world','world'],['Research','flask','research'],['Finance','coins','finance']].map(([label,i,a])=>press(icon(i,20)+'<span>'+label+'</span>',a,'','nav-btn'+(a==='play'?' active':''))).join('');
+    renderChrome();
   }
-  function contractPanel(){
-    const c=E.contract(g);
-    return panel('Client contracts','<div class="contract"><strong>'+c.name+'</strong><p>'+c.eligible+'/'+c.need+' eligible sites · Reputation '+c.rep+'+ · Tier '+(c.tier+1)+' · '+c.regions+' permits</p></div>'+progress(c.eligible,c.need)+btn('Claim '+money(c.reward),'claim',[],{class:'button outline full',disabled:!c.ready||c.reward<=0}));
-  }
-  function title(text,desc,extra=''){
-    return '<div class="page-heading"><div><h1>'+text+'</h1><p>'+desc+'</p></div>'+extra+'</div>';
-  }
-  function businessList(){
-    const owned=g.businesses.filter(b=>b.region===region);
-    return title('Businesses','Acquire and operate businesses across your markets.',badge(money(g.cash)+' cash','mode'))+
-      '<label class="select-label">Region <select data-field="region">'+g.regions.map(id=>'<option value="'+id+'" '+(id===region?'selected':'')+'>'+C.regions[id].name+'</option>').join('')+'</select></label>'+
-      (owned.length?'<div class="portfolio-head"><h2 class="subheading">Your businesses</h2><div>'+btn('Standard pricing','bulk',['standard'],{class:'button outline',disabled:!owned.some(b=>b.price!==1)})+btn('Service all','bulk',['service'],{class:'button outline',disabled:!owned.some(b=>b.wear>=5)})+'</div></div><div class="card-grid">'+owned.map(b=>businessCard(C.businesses[b.type],b)).join('')+'</div>':'')+
-      '<h2 class="subheading">Business listings</h2><div class="card-grid">'+C.businesses.filter(d=>!owned.some(b=>b.type===d.id)).map(d=>businessCard(d)).join('')+'</div>';
-  }
-  function businessCard(d,b){
-    const s=C.sectors[d.sector], t=b?E.getTerms(g,b):null, cost=E.quote(g,d.id,region);
-    const can=E.canBuy(g,d.id,region);
-    return '<article class="panel small-card"><div class="card-start"><span class="metric-icon sector" style="--sector:'+s.color+'">'+icon(s.icon)+'</span><span>'+s.name+' · Tier '+(d.tier+1)+'</span></div><h2>'+d.name+'</h2><p>'+d.detail+'</p><div class="card-foot">'+(b?'<strong>'+money(t.profit)+' / period</strong>'+btn('Manage','manage',[b.id],{class:'button outline'}):
-      '<strong>'+money(cost)+'</strong>'+btn(can?'Acquire':d.gate>E.worth(g)?'Needs '+compact(d.gate)+' net worth':'Restricted','buy',[d.id],{class:'button outline',disabled:!can||g.cash<cost}))+'</div></article>';
-  }
-  function buildingScene(b,s,d){
-    const floors=1+Math.min(6,d.tier+b.up[1]), widths=[170,212,240,268,296], w=widths[Math.min(4,d.tier+Math.floor(b.up[1]/2))], left=300-w/2, right=300+w/2, y=190-floors*17;
-    const winCount=5+d.tier;
-    const windows=Array.from({length:floors},(_,row)=>Array.from({length:winCount},(_,col)=>'<rect x="'+(left+12+col*((w-22)/winCount))+'" y="'+(y+10+row*16)+'" width="15" height="9" rx="1" fill="'+((row+col)%3?'#fff2ad':'#356a71')+'"/>').join('')).join('');
-    const trees=[54,94,489,542].map((x,i)=>'<path d="M'+x+' 202v21" stroke="#483c31" stroke-width="6"/><circle cx="'+x+'" cy="'+(196-i%2*12)+'" r="'+(20+i%2*5)+'" fill="'+(i%2?'#397962':'#559471')+'"/>').join('');
-    const workers=Array.from({length:Math.min(8,b.staff+1)},(_,i)=>'<g class="worker" style="--delay:-'+i*1.6+'s"><circle cx="'+(112+i*46)+'" cy="241" r="4" fill="#d99976"/><path d="M'+(112+i*46)+' 246v9" stroke="'+(i%2?'#eac276':'#a6c4f2')+'" stroke-width="5"/></g>').join('');
-    return '<div class="business-scene"><svg viewBox="0 0 600 285" role="img" aria-label="'+d.name+', '+floors+' floors"><rect width="600" height="285" fill="#243c4e"/><circle cx="478" cy="45" r="24" fill="#eac276"/><path d="M0 135 102 65l94 50 80-58 126 78 110-40 88 40v150H0Z" fill="#315959"/><path d="M0 156 142 120l114 49 109-35 117 23 118-28v156H0Z" fill="#4a7769"/><path d="M0 213h600v72H0z" fill="#b99d81"/><path d="M0 260h600v25H0z" fill="#4a5154"/><path d="M0 274h600" stroke="#e6bc76" stroke-width="2" stroke-dasharray="25 14"/>'+trees+'<path d="M'+left+' '+y+' '+(left+32)+' '+(y-23)+' '+(right+31)+' '+(y-23)+' '+right+' '+y+'Z" fill="#5d7874"/><path d="M'+right+' '+y+' '+(right+31)+' '+(y-23)+'v182l-31 33Z" fill="#4f6c69"/><rect x="'+left+'" y="'+y+'" width="'+w+'" height="'+(219-y)+'" fill="'+s.color+'"/>'+windows+'<rect x="'+(left+8)+'" y="195" width="'+(w-16)+'" height="6" fill="#304b46"/><rect x="283" y="197" width="34" height="22" rx="2" fill="#29453d"/><path d="M289 201h9v15h-9zm13 0h9v15h-9z" fill="#92b7ae"/>'+workers+'<g class="delivery"><rect x="20" y="263" width="42" height="11" rx="2" fill="'+s.color+'"/><rect x="53" y="258" width="16" height="16" rx="3" fill="#72aa96"/><circle cx="31" cy="274" r="4" fill="#273331"/><circle cx="59" cy="274" r="4" fill="#273331"/></g></svg><div>'+icon(s.icon,18)+' '+s.name+' · '+C.regions[b.region].name+'</div></div>';
-  }
-  function businessDetail(b){
-    const d=C.businesses[b.type],s=C.sectors[d.sector],t=E.getTerms(g,b);
-    const controls=E.upgrades.map(([name,desc,,limit],i)=>{
-      const cost=E.upgradeCost(b,i,g), locked=b.up[i]>=limit||(i===7&&(!b.staff||E.worth(g)<4000));
-      const preview={...b,up:[...b.up]};preview.up[i]++;
-      const change=E.getTerms(g,preview).profit-t.profit;
-      return '<div class="action-row"><span><strong>'+name+' · Lv '+b.up[i]+'</strong><small>'+desc+(b.up[i]<limit?' · '+(change>=0?'+':'')+money(change)+'/period':'')+'</small></span>'+btn(b.up[i]>=limit?'Max':money(cost),'improve',[b.id,'upgrade',i],{class:'button outline',disabled:locked||g.cash<cost})+'</div>';
-    }).join('');
-    const choice=(name,description,action,cost,disabled)=>'<div class="action-row"><span><strong>'+name+'</strong><small>'+description+'</small></span>'+btn(money(cost),'improve',[b.id,action,0],{class:'button outline',disabled:disabled||g.cash<cost})+'</div>';
-    return '<div class="crumb">'+btn('‹ All businesses','allBusinesses',[],{class:'button text'})+'</div>'+title(d.name,d.detail,badge(money(g.cash)+' cash','mode'))+
-      '<div class="layout"><div>'+buildingScene(b,s,d)+'<div class="metrics business-metrics">'+summary('Revenue',money(t.revenue),'coins','mint')+summary('Expenses',money(t.costs),'wrench','gold')+summary('Profit',money(t.profit),'chart','mint')+'</div>'+
-      panel('Operations','<div class="stat-rows"><div><span>'+s.focus+' served / demand</span><strong>'+t.sales+' / '+t.demand+'</strong></div><div><span>Capacity</span><strong>'+t.capacity+'</strong></div><div><span>Reputation</span><strong>'+b.rep+'/100</strong></div><div><span>Equipment wear</span><strong>'+Math.round(b.wear)+'%</strong></div><div><span>'+s.input+' costs'+(t.link?' · supplier link active':'')+'</span><strong>'+money(t.materials)+'</strong></div><div><span>Wages / overhead</span><strong>'+money(t.wages)+' / '+money(t.overhead)+'</strong></div></div>'+
-      '<label class="select-label">Pricing <select data-field="price">'+['Value (−15%)','Standard','Premium (+18%)'].map((x,i)=>'<option value="'+i+'" '+(i===b.price?'selected':'')+'>'+x+'</option>').join('')+'</select></label>'+
-      choice(s.lever,'Improve the industry-specific offer.','special',Math.round(d.cost*.35),b.special)+choice('Expand distribution','Open another channel after upgrading the facility.','channel',E.channelCost(b),b.channels>=12||b.up[1]<1)+choice('Service equipment','Restore full tool condition.','repair',Math.round(d.cost*.02*b.wear/45),b.wear<5)+btn('Sell business','sellPrompt',[b.id],{class:'button text'}))+'</div>'+
-      '<aside>'+panel('Workforce',choice('Hire '+s.role.toLowerCase(),b.staff+' crew · '+money(t.wages)+' wages / period','hire',E.hireCost(b),b.staff>=(g.challenge===8?2:8))+'<div class="manager-buttons">'+['Operations','Marketing','Finance'].map((x,i)=>btn(x,'improve',[b.id,'manager',i+1],{class:'button outline',disabled:b.staff<2||b.manager===i+1||g.cash<Math.round(d.cost*.25)})).join('')+'</div><p class="help">Managers require two employees and cost '+money(Math.round(d.cost*.25))+'.</p>')+panel('Upgrades',controls)+panel('Partnerships',E.deals.map(([name,desc,i])=>{
-      const active=(b.dealUntil||0)>g.round;
-      const requirements=i===2?' · Franchise Guide':i===3?' · Capital Markets':'';
-      const cost=E.dealQuote(g,b,i);
-      return '<div class="action-row"><span><strong>'+name+'</strong><small>'+desc+requirements+' · Reputation 65+</small></span>'+
-        btn(active&&b.deal===i?(b.dealUntil-g.round)+' periods':money(cost),'sign',[b.id,i],{class:'button outline',disabled:active||b.rep<65||g.cash<cost||(i===2&&!g.tech.includes(43))||(i===3&&!g.tech.includes(39))})+'</div>';
-    }).join(''))+'</aside></div>';
-  }
-  function world(){
-    const r=C.regions[region], owned=g.regions.includes(region), price=Math.round(r.cost*(1-.045*E.level(g,6)));
-    const rivals=['Aster Holdings','BudgetWorks','Cobalt Group'];
-    return title('World map','Compare economies and open new markets.')+'<div class="layout"><section class="panel map-panel"><div class="map"><svg viewBox="0 0 650 345" preserveAspectRatio="none" aria-hidden="true"><path d="M0 190 68 166 100 109 207 112 234 71 323 76 344 50 412 43 464 21 565 44 616 90 650 86V345H0Z" fill="#365a47"/><path d="M0 237 68 227 151 192 206 215 252 227 302 224 388 152 469 193 503 154 574 100 650 165" fill="none" stroke="#d3bf83" stroke-width="2" stroke-dasharray="4 8"/><path d="M18 320q92-80 162-45t138-1q62-60 133-33t142-37l57-8" fill="none" stroke="#6b9c9c" stroke-width="16"/><path d="m38 144 16-31 18 31m43-45 16-29 18 29m92-58 16-22 19 22m64 87 14-29 18 29m75-34 15-25 20 25m79 151 15-23 18 23" fill="#5e8663" stroke="#87a977" stroke-width="4" stroke-linejoin="round"/></svg>'+C.regions.map(point=>'<button type="button" class="map-point '+(g.regions.includes(point.id)?'open':'')+' '+(region===point.id?'current':'')+'" aria-label="'+point.name+'" data-act="region" data-args="'+point.id+'" style="left:'+point.x+'%;top:'+point.y+'%">'+icon(g.regions.includes(point.id)?'pin':'lock',16)+'</button>').join('')+'</div><div class="region-strip">'+C.regions.map(p=>btn(p.name,'region',[p.id],{class:'button '+(p.id===region?'primary':'outline')})).join('')+'</div></section><aside>'+
-      panel(r.name,'<p class="intro">'+r.kind+'</p><div class="stat-rows"><div><span>Demand index</span><strong>'+Math.round(r.demand*100)+'</strong></div><div><span>Labour index</span><strong>'+Math.round(r.wages*100)+'</strong></div><div><span>Property index</span><strong>'+Math.round(r.rent*100)+'</strong></div><div><span>Specialities</span><strong>'+r.strength.map(i=>C.sectors[i].name).join(', ')+'</strong></div><div><span>Owned businesses</span><strong>'+g.businesses.filter(b=>b.region===region).length+'</strong></div></div>'+
-      (owned?btn('View businesses','openRegion',[region],{class:'button primary full'}):btn('Buy permit · '+money(price),'permit',[region],{class:'button primary full',disabled:g.cash<price||E.worth(g)<r.gate||g.challenge===2})+'<p class="help">Requires '+compact(r.gate)+' net worth and an eligible campaign.</p>'))+
-      panel('Regional rivals','<div class="stat-rows">'+rivals.map((name,i)=>{
-        const stake=g.rivals[region][i], cost=E.mergerQuote(g,region,i);
-        return '<div><span>'+name+'<br>'+['Expansionist','Low cost','Premium'][i]+' · Influence '+(stake/1000).toFixed(1)+'</span>'+
-          (g.tech.includes(46)?btn('Acquire stake · '+money(cost),'merger',[region,i],{class:'button outline',disabled:!owned||stake<2200||!g.businesses.some(b=>b.region===region)||g.cash<cost}):'')+'</div>';
-      }).join('')+'</div><p class="help">Acquisition Review unlocks regional stake deals. Deals reduce rival influence and improve your local reputation.</p>')+'</aside></div>';
-  }
-  function research(){
-    return title('Research','Invest in one of eight branches to shape your group.',badge(g.points+' research points','mode'))+
-      '<div class="region-strip research-tabs">'+C.tracks.map(([name,art],i)=>btn(icon(art,17)+' '+name,'branch',[i],{class:'button '+(i===branch?'primary':'outline')})).join('')+'</div>'+
-      panel(C.tracks[branch][0],'<p class="intro">'+C.tracks[branch][2]+'. Earn research points by working shifts and closing periods.</p><div class="research-list">'+C.research.filter(t=>t.branch===branch).map(t=>{
-        const done=g.tech.includes(t.id), allowed=(!t.level||g.tech.includes(t.id-1))&&E.worth(g)>=t.gate;
-        return '<div class="action-row tech"><div class="metric-icon '+(done?'mint':'lilac')+'">'+icon(done?'check':'flask',19)+'</div><span><strong>'+t.title+'</strong><small>'+t.effect+' · '+(done?'Completed':t.points+' points'+(!allowed&&t.level?' · previous technology and '+compact(t.gate)+' net worth':''))+'</small></span>'+btn(done?'Complete':money(t.cost),'study',[t.id],{class:'button outline',disabled:done||!allowed||g.cash<t.cost||g.points<t.points})+'</div>';
-      }).join('')+'</div>');
-  }
-  function graph(){
-    if(g.history.length<2)return '<p class="intro">Close two trading periods to chart your cash balance.</p>';
-    const min=Math.min(...g.history),max=Math.max(...g.history);
-    const points=g.history.map((v,i)=>(10+i*580/(g.history.length-1))+','+(116-(v-min)/(max-min||1)*100)).join(' ');
-    return '<div class="chart-wrap"><svg viewBox="0 0 600 132" role="img" aria-label="Cash history from '+money(g.history[0])+' to '+money(g.history.at(-1))+'"><path d="M10 115H590M10 65H590M10 15H590" stroke="#e4ded2" stroke-dasharray="5 5"/><polyline fill="none" stroke="#3c826d" stroke-width="3" points="'+points+'"/></svg><div><span>'+money(min)+' low</span><span>'+money(max)+' high</span></div></div>';
-  }
-  function finance(){
-    const assets=g.businesses.reduce((sum,b)=>sum+E.value(b,g),0);
-    const credit=E.credit(g);
-    return title('Finance','Track cash flow, manage debt and invest in property.')+
-      '<div class="metrics">'+summary('Cash balance',money(g.cash),'coins','mint')+summary('Business assets',money(assets),'building','lilac')+summary('Property assets',money(g.property),'empire','gold')+summary('Liabilities',money(g.debt),'chart','gold')+'</div>'+
-      '<div class="layout"><div>'+panel('Cash flow',graph()+'<div class="stat-rows"><div><span>Last period revenue</span><strong>'+money(g.last.revenue)+'</strong></div><div><span>Last period expenses</span><strong>'+money(g.last.costs)+'</strong></div><div><span>Last period profit</span><strong>'+money(g.last.profit)+'</strong></div><div><span>Lifetime revenue</span><strong>'+money(g.totalRevenue)+'</strong></div><div><span>Lifetime operating profit</span><strong>'+money(g.totalRevenue-g.totalCosts)+'</strong></div></div>')+
-      panel('Corporate projects','<p class="intro">Complete research branches and build a portfolio capable of delivering larger projects.</p>'+E.projects.map(([name,tech,cost,points,tier,sites],i)=>'<div class="action-row"><span><strong>'+name+'</strong><small>'+C.research[tech].title+' · '+points+' RP · '+sites+' tier '+(tier+1)+' sites</small></span>'+btn(g.projects.includes(i)?'Complete':money(cost),'project',[i],{class:'button outline',disabled:g.projects.includes(i)||!g.tech.includes(tech)||g.cash<cost||g.points<points||g.businesses.filter(b=>C.businesses[b.type].tier>=tier).length<sites})+'</div>').join(''))+'</div><aside>'+
-      panel('Capital desk','<div class="stat-rows"><div><span>Available credit</span><strong>'+money(credit)+'</strong></div><div><span>Interest per period</span><strong>'+((.011-.00065*E.level(g,5))*100).toFixed(2)+'%</strong></div></div><div class="two-buttons">'+btn('Borrow','capital',['loan'],{class:'button outline',disabled:!credit||!g.businesses.length||g.challenge===0})+btn('Repay','capital',['repay'],{class:'button outline',disabled:!g.debt||!g.cash})+'</div>')+
-      panel('Commercial property','<p class="intro">Property earns 0.6% per trading period. A purchase retains 97% of cash as book value. Selling returns 90% of book value.</p><div class="two-buttons">'+btn('Invest','capital',['property'],{class:'button outline',disabled:!g.tech.includes(35)||!g.cash})+btn('Sell property','capital',['liquidate'],{class:'button outline',disabled:!g.property})+'</div>')+'</aside></div>';
-  }
-  function render(){
-    document.documentElement.classList.toggle('less-motion',!opts.motion);
-    renderTop();
-    const b=g.businesses.find(b=>b.id===selected);
-    if(tab==='Businesses'&&!g.regions.includes(region))region=g.home;
-    $('#main').innerHTML=({Empire:empire,Businesses:()=>b?businessDetail(b):businessList(),World:world,Research:research,Finance:finance})[tab]();
-  }
-  function open(name,title,content){
-    if(!dialog.open)savedFocus=document.activeElement;
-    dialog.innerHTML='<div class="dialog-head"><h2 id="dialog-title">'+title+'</h2>'+btn(icon('close')+'<span class="sr">Close</span>','dismiss',[],{class:'icon-button'})+'</div><div class="dialog-body">'+content+'</div>';
+  function open(name,label,body,classes=''){
+    if(!dialog.open)previousFocus=document.activeElement;
+    keys.clear();stopDrag();
+    modal=name;dialog.className=classes;
+    dialog.innerHTML='<div class="sheet-head"><div><span class="paper-label">FROM $1 TO $1 BILLION</span><h2 id="dialog-title">'+label+'</h2></div>'+press(icon('close')+'<span class="sr">Close</span>','dismiss','','icon')+'</div><div class="sheet-body">'+body+'</div>';
     if(!dialog.open)dialog.showModal();
   }
-  function dismiss(){
-    if(dialog.open)dialog.close();
-    if(savedFocus?.isConnected)savedFocus.focus();
+  function close(){
+    modal='';if(dialog.open)dialog.close();dirty=true;
+    if(previousFocus?.isConnected)previousFocus.focus({preventScroll:true});
   }
-  function jobView(i){
-    const job=C.jobs[i],signal=(g.worked+g.event+(g.seed%5))%3;
-    open('job',job.name,'<p class="intro">'+job.desc+'</p><p class="signal">'+icon('chart',17)+' Local forecast favours <strong>'+job.options[signal].toLowerCase()+'</strong>.</p><div class="option-list">'+job.options.map((option,n)=>btn('<span><strong>'+option+'</strong><small>'+money(job.cost[n])+' supplies</small></span><b>Earn '+money(Math.round(job.payouts[n]*(n===signal?1.35:n===2&&signal===0?.68:1)*(1+g.tools[i]*.29))-job.cost[n])+'</b>','work',[i,n],{class:'rule',disabled:g.cash<job.cost[n]})).join('')+'</div>');
+  function offline(note){
+    if(!note)return;
+    open('offline','Welcome back',title('Automated sites kept working','Offline orders come from staffed, automated production.')+
+      row('Time credited',note.minutes+' min')+row('Revenue',money(note.revenue))+row('Expenses',money(note.costs))+row('Net result',money(note.profit))+
+      press('Back to work','dismiss','','primary full'));
   }
-  function toolView(){
-    open('tools','Job equipment','<p class="intro">Every equipment level improves that job’s payout by 29% of the base.</p>'+C.jobs.map((job,i)=>'<div class="action-row"><span><strong>'+job.name+'</strong><small>Kit level '+g.tools[i]+' / 4</small></span>'+btn(g.tools[i]>=4?'Max':money(E.toolCost(g,i)),'tool',[i],{class:'button outline',disabled:g.tools[i]>=4||g.cash<E.toolCost(g,i)})+'</div>').join(''));
+  function construction(){
+    const sector=selection.sector;
+    const bType=C.sectors[sector];
+    const drop='<label class="form-row">Industry <select data-field="sector">'+C.sectors.map((sec,i)=>'<option value="'+i+'"'+(sector===i?' selected':'')+'>'+sec.name+'</option>').join('')+'</select></label>';
+    const body=C.businesses.filter(d=>d.sector===sector).map(d=>{
+      const cost=E.quote(g,d.id,s.region);
+      const can=E.canBuy(g,d.id,s.region);
+      const detail=d.detail+' '+(!can&&d.gate>E.worth(g)?'Requires '+money(d.gate)+' net worth.':!can?'Unavailable in this district or campaign.':'');
+      return rule(d.name,detail,press('Build '+money(cost),'build',d.id,'secondary',!can||g.cash<cost));
+    }).join('');
+    open('construction','Build in '+C.regions[s.region].name,title('Available sites',bType.name+' businesses for this district.')+drop+body);
   }
-  function settings(){
-    open('settings','Settings','<div class="settings-grid"><label>Music <input type="range" min="0" max="1" step=".02" value="'+opts.music+'" data-field="music"></label><label>Sound effects <input type="range" min="0" max="1" step=".02" value="'+opts.fx+'" data-field="fx"></label><label>Motion <input type="checkbox" '+(opts.motion?'checked':'')+' data-field="motion"></label><label>Skip tutorial goals <input type="checkbox" '+(g.skipTutorial?'checked':'')+' data-field="tutorial"></label></div>'+
-      '<div class="modal-buttons">'+btn('Campaigns','campaigns')+btn('Save now','save')+btn('Export save','export')+btn('Import save','import')+btn('Help','help')+'</div><p class="help">'+(S.persistent()?'Progress autosaves after actions on this browser.':'Browser storage is unavailable. Export your save before closing.')+'</p>');
+  function tools(){
+    const levels=g.tools;
+    open('tools','Equipment cart',title('Carry more per trip','Job kits increase carrying capacity, walking speed and the value of completed orders.')+starterKeys.map((key,i)=>{
+      const cost=E.toolCost(g,i);
+      return rule(F.recipes[key].label,'Level '+levels[i]+' of 4',press(levels[i]===4?'Max level':money(cost),'tool',i,'secondary',levels[i]===4||g.cash<cost));
+    }).join(''));
   }
-  function campaigns(){
-    open('campaigns','Campaigns','<p class="intro">Three independent save slots. New campaigns begin with $1.</p>'+[0,1,2].map(i=>{
-      const slot=S.getSlot(i);
-      return '<div class="action-row"><span><strong>Slot '+(i+1)+(i===opts.slot?' · Active':'')+'</strong><small>'+(slot?slot.mode+' · '+compact(E.worth(slot))+' net worth':'Empty')+'</small></span>'+btn(slot?'Load':'Create',slot?'load':'newPrompt',[i],{class:'button outline',disabled:i===opts.slot})+(slot?btn('Delete','deletePrompt',[i],{class:'button text',disabled:i===opts.slot}):'')+'</div>';
-    }).join('')+'<p class="help">Active campaign play '+Math.floor(g.played/60)+' min · Campaign wins '+opts.completed+(opts.fastest?' · Fastest recorded play '+Math.round(opts.fastest/60)+' min':'')+'</p>'+(g.won?btn('Start New Game Plus','newPrompt',[opts.slot,1],{class:'button primary full'}):''));
-  }
-  function newPrompt(slot,plus){
-    slotRequest=slot;
-    open('new','New '+(plus?'legacy ':'')+'campaign','<label class="select-label">Difficulty <select id="difficulty"><option>Casual</option><option selected>Standard</option><option>Expert</option></select></label><label class="select-label">Challenge <select id="challenge"><option value="-1">Open campaign</option>'+C.challenges.map(([n,d],i)=>'<option value="'+i+'">'+n+'</option>').join('')+'</select></label><p class="intro" id="challenge-desc">Choose your own industry and expansion plan.</p>'+
-      (plus?'<label class="select-label">Start in <select id="start-region"><option value="0">Maplebrook</option><option value="1">Cedar Junction</option></select></label><p class="help">This replaces the current campaign in this slot.</p>':'')+btn('Begin with $1','newGame',[plus||0],{class:'button primary full'}));
-  }
-  function awards(){
-    open('awards','Achievements','<p class="intro">'+g.achievements.length+' / '+E.achievements.length+' earned in this campaign</p><div class="award-grid">'+E.achievements.map(([n,m],i)=>'<div class="award '+(g.achievements.includes(i)?'earned':'')+'">'+icon(g.achievements.includes(i)?'trophy':'lock',17)+'<span>'+n+(m?' · '+compact(m):'')+'</span></div>').join('')+'</div>');
-  }
-  function offlineDialog(data){
-    if(!data)return;
-    open('offline','Welcome back','<p class="intro">Automated businesses operated while you were away. Up to 24 reduced trading periods are credited.</p><div class="stat-rows"><div><span>Time away credited</span><strong>'+data.minutes+' min</strong></div><div><span>Revenue</span><strong>'+money(data.revenue)+'</strong></div><div><span>Expenses</span><strong>'+money(data.costs)+'</strong></div><div><span>Net result</span><strong>'+money(data.profit)+'</strong></div></div>'+btn('Continue','dismiss',[],{class:'button primary full'}));
-  }
-  function mutate(result,label,kind='tap'){
-    if(!result){notify('This action is unavailable.');return false;}
-    const newly=[];
-    for(let i=0;i<E.achievements.length;i++){
-      if(!g.achievements.includes(i)&&E.achievements[i][2](g)){g.achievements.push(i);newly.push(E.achievements[i][0]);}
+  function expansion(){
+    const b=business();
+    if(!b){
+      const cost=[430,1300,3100][s.expanded];
+      open('expansion','Expand the lemonade stand',title(['Express counter','Hire a stand assistant','Upgrade the prep line','Fully expanded'][s.expanded],
+        ['Open a second serving position and carry an extra item.','An assistant supplies and serves the stand while you work nearby.','Improve preparation speed and carrying capacity.','The stand has all three expansions.'][s.expanded])+
+        (cost?press('Build · '+money(cost),'townUpgrade','','primary full',g.cash<cost):''));
+      return;
     }
-    if(g.won&&!g.winLogged){
-      g.winLogged=true;opts.completed++;opts.legacy++;opts.fastest=opts.fastest?Math.min(opts.fastest,g.completedAt):g.completedAt;
-      sound('win');dismiss();open('won','You built a billion-dollar empire','<p class="intro">Your portfolio reached '+money(E.worth(g))+' in net worth with positive operating profit and manageable debt.</p>'+btn('Keep building','dismiss',[],{class:'button primary full'}));
-    }else if(kind) sound(kind);
-    save();render();
-    if(label||newly.length)notify(label||(newly.length===1?'Achievement · '+newly[0]:newly.length+' achievements earned'));
+    const cost=E.upgradeCost(b,1,g);
+    open('expansion','Expand the facility',title('Build an annex','Adds floor space and a second service position. Layout controls unlock after the first expansion.')+
+      press('Build · '+money(cost),'improve',b.id+',upgrade,1','primary full',g.cash<cost||b.up[1]>=E.upgrades[1][3]));
+  }
+  function portfolio(){
+    const b=g.businesses.slice().sort((a,b)=>a.region-b.region||a.id-b.id);
+    const list=b.map(site=>{
+      const d=C.businesses[site.type], rec=O.record(s,site), rate=O.rate(s,site);
+      const controls=press('Manage','manage',site.id)+press(rec.eta>0?'Building':'Visit','visit',site.id,'secondary',rec.eta>0||(site.region!==s.region&&g.businesses.length<2));
+      return rule(d.name,C.regions[site.region].name+' · '+site.staff+' crew · '+rec.done+' orders'+(rate.crew?' · Staffed':' · Owner operated'),'<div class="button-group">'+controls+'</div>');
+    }).join('');
+    open('portfolio','Your businesses',list||title('The first storefront','Walk to a construction lot to open your first business.')+press(icon('pin',16)+' Find a lot','findLot','','primary full'));
+  }
+  function manage(id){
+    const b=g.businesses.find(x=>x.id===id);
+    if(!b)return portfolio();
+    selection.site=id;
+    const d=C.businesses[b.type], r=O.record(s,b), rates=O.rate(s,b), cost=E.hireCost(b), max=g.challenge===8?2:8;
+    const q=O.quote(s,b), cap=b.up[7]?'Automated':b.staff?'Staffed':'Owner operated';
+    const ops=section('Operations',row('Revenue per completed order',money(q.revenue))+row('Supplies per order',money(q.inputs))+row('Staffed capacity',Math.round(rates.service*60)+' orders/min')+row('Completed orders',r.done)+row('Reputation',Math.round(b.rep)+'%')+row('Equipment wear',Math.round(b.wear)+'%')+
+      '<label class="form-row">Pricing <select data-field="price"><option value="0" '+(b.price===0?'selected':'')+'>Value</option><option value="1" '+(b.price===1?'selected':'')+'>Standard</option><option value="2" '+(b.price===2?'selected':'')+'>Premium</option></select></label>');
+    const crew=section('Workforce',rule('Hire '+C.sectors[d.sector].role.toLowerCase(),b.staff+' of '+max+' workers. Staff walk supplies and orders between stations.',
+      press(money(cost),'improve',id+',hire,0','secondary',b.staff>=max||g.cash<cost))+
+      ['Operations manager','Marketing manager','Finance manager'].map((label,i)=>rule(label,i===0?'Faster shipping and lower wear.':i===1?'Improves reputation.':'Reduces overhead.',
+        press(b.manager===i+1?'Assigned':money(Math.round(d.cost*.25)),'improve',id+',manager,'+(i+1),'secondary',b.staff<2||b.manager===i+1||g.cash<Math.round(d.cost*.25)))).join(''));
+    const upgrades=section('Upgrades',E.upgrades.map(([label,desc,,limit],i)=>{
+      const price=E.upgradeCost(b,i,g);
+      return rule(label+' · '+b.up[i]+'/'+limit,desc,press(money(price),'improve',id+',upgrade,'+i,'secondary',b.up[i]===limit||g.cash<price||(i===7&&(!b.staff||E.worth(g)<4000))));
+    }).join('')+
+      rule(C.sectors[d.sector].lever,'Improve the offer in this industry.',press(money(Math.round(d.cost*.35)),'improve',id+',special,0','secondary',b.special||g.cash<Math.round(d.cost*.35)))+
+      rule('Distribution channel','Reach a wider market. Requires an annex.',press(money(E.channelCost(b)),'improve',id+',channel,0','secondary',!b.up[1]||b.channels>=12||g.cash<E.channelCost(b)))+
+      rule('Service the equipment','Restore performance lost to wear.',press('Service','improve',id+',repair,0','secondary',b.wear<5||g.cash<Math.round(d.cost*.02*b.wear/45)))+
+      (s.site===id&&b.up[1]?rule('Workshop layout','Switch between two workstation layouts.',press(r.layout?'Original':'Mirror','blueprint',r.layout?0:1)):''));
+    const partners=section('Partnerships', E.deals.map(([label,desc,i])=>{
+      const price=E.dealQuote(g,b,i);
+      return rule(label,desc+' Reputation 65+ and applicable research.',press((b.dealUntil||0)>g.round?'Active':money(price),'sign',id+','+i,'secondary',b.rep<65||g.cash<price||(b.dealUntil||0)>g.round||(i===2&&!g.tech.includes(43))||(i===3&&!g.tech.includes(39))));
+    }).join(''));
+    open('manage',d.name,'<div class="sheet-summary">'+badge(C.regions[b.region].name)+badge(cap)+badge('Tier '+(d.tier+1))+'</div>'+ops+crew+upgrades+partners+press('Sell business','sellPrompt',id,'danger'));
+  }
+  function districts(){
+    const r=C.regions[selection.region], has=g.regions.includes(r.id), cost=Math.round(r.cost*(1-.045*E.level(g,6)));
+    const openable=r.id===s.region||g.businesses.length>=2||s.focus?.id==='travel';
+    const options='<div class="chipbar">'+C.regions.map(q=>press((g.regions.includes(q.id)?'':'◦ ')+q.name,'region',q.id,q.id===r.id?'selected':'secondary')).join('')+'</div>';
+    const inspect=section(r.name,row('District',r.kind)+row('Demand index',Math.round(r.demand*100))+row('Wages index',Math.round(r.wages*100))+
+      row('Specialities',r.strength.map(i=>C.sectors[i].name).join(', '))+row('Owned businesses',g.businesses.filter(b=>b.region===r.id).length));
+    const action=has?press('Travel to '+r.name,'travelTo',r.id,'primary full',!openable):
+      press('Purchase permit · '+money(cost),'permit',r.id,'primary full',g.cash<cost||E.worth(g)<r.gate||g.challenge===2)+'<p class="muted">Requires '+money(r.gate)+' net worth.</p>';
+    const note=has&&!openable?'<p class="muted">Walk to the bus stop. Fast travel unlocks when you own two businesses.</p>':'';
+    const competitors=section('Regional rivals',['Aster Holdings','BudgetWorks','Cobalt Group'].map((name,i)=>{
+      const value=g.rivals[r.id][i], cost=E.mergerQuote(g,r.id,i);
+      return rule(name,['Expansionist','Low cost','Premium'][i]+' · Influence '+(value/1000).toFixed(1),
+        press('Acquire stake · '+money(cost),'stake',r.id+','+i,'secondary',!g.tech.includes(46)||!has||value<2200||g.cash<cost||!g.businesses.some(b=>b.region===r.id)));
+    }).join(''));
+    open('districts','Districts',options+inspect+action+note+competitors);
+  }
+  function research(){
+    const branch=selection.branch;
+    const tabs='<div class="chipbar">'+C.tracks.map(([name,i],idx)=>press(icon(i,15)+name,'branch',idx,idx===branch?'selected':'secondary')).join('')+'</div>';
+    const content=C.research.filter(t=>t.branch===branch).map(t=>{
+      const studied=g.tech.includes(t.id), available=(!t.level||g.tech.includes(t.id-1))&&E.worth(g)>=t.gate;
+      return rule(t.title,t.effect+' · '+t.points+' RP'+(t.gate?' · '+money(t.gate)+' net worth':''),press(studied?'Complete':money(t.cost),'study',t.id,'secondary',studied||!available||g.points<t.points||g.cash<t.cost));
+    }).join('');
+    open('research','Research','<p class="muted">Research points accumulate with business shifts and starter orders.</p>'+badge(g.points+' RP available')+tabs+section(C.tracks[branch][0],content));
+  }
+  function flowChart(){
+    if(g.history.length<2)return '<p class="muted">Cash history appears after two shifts.</p>';
+    const highest=Math.max(...g.history),lowest=Math.min(...g.history),range=Math.max(1,highest-lowest);
+    const points=g.history.map((v,i)=>(8+i*404/(g.history.length-1)).toFixed(1)+','+(68-60*(v-lowest)/range).toFixed(1)).join(' ');
+    return '<div class="cash-chart"><svg viewBox="0 0 420 76" role="img" aria-label="Cash balance from '+money(g.history[0])+' to '+money(g.history.at(-1))+'">'+
+      '<path d="M8 9H412M8 38H412M8 68H412" stroke="#d9d9bd" stroke-dasharray="3 5" fill="none"/><polyline points="'+points+'" stroke="#5b8162" stroke-width="2.25" fill="none" /></svg></div>';
+  }
+  function finance(){
+    const values=g.businesses.reduce((n,b)=>n+E.value(b,g),0);
+    const c=E.contract(g);
+    const stats=section('Last shift',row('Revenue',money(g.last.revenue))+row('Expenses',money(g.last.costs))+row('Operating profit',money(g.last.profit))+
+      row('Portfolio assets',money(values))+row('Property book value',money(g.property))+row('Lifetime revenue',money(g.totalRevenue))+row('Debt',money(g.debt))+flowChart());
+    const capital=section('Capital',rule('Available credit',money(E.credit(g)),press('Borrow','capital','loan','secondary',g.challenge===0||!g.businesses.length||!E.credit(g)))+
+      rule('Debt repayment',money(g.debt),press('Repay','capital','repay','secondary',!g.debt||!g.cash))+
+      rule('Commercial property','Earn rent per shift. Cash Forecasts unlocks investments.',press('Invest','capital','property','secondary',!g.tech.includes(35)||!g.cash))+
+      rule('Sell property',money(g.property)+' book value',press('Liquidate','capital','liquidate','secondary',!g.property)));
+    const policy=section('Operating policy','<div class="chipbar">'+E.rules.map((r,i)=>press(r.name,'policy',i,g.policy===i?'selected':'secondary')).join('')+'</div><p class="muted">'+E.rules[g.policy].detail+'</p>');
+    const contracts=section('Portfolio contracts',rule(c.name,c.eligible+'/'+c.need+' eligible sites · Tier '+(c.tier+1)+' · Reputation '+c.rep+'+ · '+c.regions+' permits',
+      press('Claim '+money(c.reward),'claim','','secondary',!c.ready||c.reward<=0)));
+    const projects=section('Corporate projects',E.projects.map(([name,tech,cost,points,tier,sites],i)=>rule(name,C.research[tech].title+' · '+points+' RP · '+sites+' tier '+(tier+1)+' sites',
+      press(g.projects.includes(i)?'Complete':money(cost),'project',i,'secondary',g.projects.includes(i)||g.cash<cost||g.points<points||!g.tech.includes(tech)||g.businesses.filter(b=>C.businesses[b.type].tier>=tier).length<sites))).join(''));
+    open('finance','Finance',stats+policy+capital+contracts+projects);
+  }
+  function capital(kind){
+    const max=({loan:E.credit(g),repay:Math.min(g.debt,g.cash),property:g.cash,liquidate:g.property})[kind];
+    const name=({loan:'Business loan',repay:'Repay debt',property:'Buy commercial property',liquidate:'Sell property'})[kind];
+    if(!name||!max)return finance();
+    open('capital',name,'<label class="form-row">Amount in dollars <input id="amount" min=".01" step=".01" max="'+max/100+'" type="number" inputmode="decimal"></label><p class="muted">Available '+money(max)+'</p>'+press('Confirm','capitalApply',kind,'primary full'));
+  }
+  function preferences(){
+    open('settings','Settings','<div class="settings-grid"><label>Sound effects <input data-field="sound" type="range" min="0" max="1" step=".02" value="'+settings.sound+'"></label><label>Camera motion <input type="checkbox" data-field="motion" '+(settings.motion?'checked':'')+'></label></div>'+
+      '<div class="chipbar">'+press('Campaign slots','slots')+press('Save now','save')+press('Export save','export')+press('Import save','import')+press('How to play','help')+'</div>'+
+      '<p class="muted">'+(S.persistent()?'Your progress is saved in this browser. Export a save to move between devices.':'Storage is unavailable. Export a copy before you leave.')+'</p>');
+  }
+  function slots(){
+    const list=[0,1,2].map(i=>{
+      const data=S.getSlot(i);
+      const active=i===settings.slot;
+      return rule('Slot '+(i+1)+(active?' · Active':''),data?data.mode+' · '+money(E.worth(data))+' net worth':'Empty',
+        '<div class="button-group">'+press(data?'Load':'Create',data?'load':'newPrompt',i,'secondary',active)+(data?press('Delete','deletePrompt',i,'danger',active):'')+'</div>');
+    }).join('');
+    open('slots','Campaigns',list+row('Campaigns won',settings.completed)+row('Play time',Math.floor(s.elapsed/60)+' min')+
+      (g.won?press('Begin New Game Plus','newPrompt',settings.slot+',1','primary full'):''));
+  }
+  function campaignOffer(slot,plus){
+    selection.slot=slot;selection.plus=plus;
+    const challenges='<select id="challenge"><option value="-1">Open campaign</option>'+C.challenges.map(([name],i)=>'<option value="'+i+'">'+name+'</option>').join('')+'</select>';
+    const places=plus?'<label class="form-row">Starting home <select id="home"><option value="0">Maplebrook</option><option value="1">Cedar Junction</option></select></label><p class="muted">This replaces the active slot.</p>':'';
+    open('new','Start a campaign','<label class="form-row">Difficulty <select id="difficulty"><option>Casual</option><option selected>Standard</option><option>Expert</option></select></label>'+
+      '<label class="form-row">Challenge '+challenges+'</label><p class="muted" id="challenge-copy">Choose any industry and expansion plan.</p>'+places+
+      press('Start with $1','newGame','','primary full'));
+  }
+  function achievements(){
+    const rows=E.achievements.map(([name,amount],i)=>'<li class="'+(g.achievements.includes(i)?'earned':'')+'">'+icon(g.achievements.includes(i)?'trophy':'lock',16)+'<span>'+name+(amount?' · '+money(amount):'')+'</span></li>').join('');
+    open('achievements','Achievements','<p class="muted">'+g.achievements.length+' of '+E.achievements.length+' unlocked</p><ul class="achievement-list">'+rows+'</ul>');
+  }
+  function help(){
+    open('help','How to play',section('Movement','<p class="muted">Use WASD or the arrow keys on a keyboard. On touchscreens, drag the joystick or drag anywhere in the field. Tap any point to walk there.</p>')+
+      section('Workstations','<p class="muted">Move within reach of a station to pick up or drop off a batch. Wait at a machine while it finishes, then collect the output. Walk into a car wash bay to clean the waiting car.</p>')+
+      section('Growing the business','<p class="muted">Walk to a construction lot, door, bus stop or office. Press E or use the nearby action button. Staff keep your other businesses running while you work elsewhere.</p>')+
+      section('Accounting','<p class="muted">Customers pay when you fulfil an order. Wages, upkeep and interest settle automatically at the end of a shift. Earn a sustainable $1 billion with at least two businesses and positive operating results.</p>'));
+  }
+  function stationAction(){
+    const st=s.focus;
+    if(!st||st.kind!=='action'||st.building)return;
+    sound('tap');
+    if(st.id==='door')change(s.region);
+    else if(st.id==='office')manage(s.site);
+    else if(st.id==='expand'||st.id==='townExpansion')expansion();
+    else if(st.id==='tools')tools();
+    else if(st.id==='travel'){selection.region=s.region;districts();}
+    else if(st.id==='block'){
+      const pages=O.blockCount(s);
+      if(O.changeScene(s,s.region,0,(s.lotPage+1)%pages))save();
+    }else if(st.id.startsWith('lot-')){
+      if(st.business)change(s.region,st.business);
+      else{selection.plot=st.index;construction();}
+    }
+  }
+  function change(region,id=0){
+    if(O.changeScene(s,region,id)){close();save();return true;}
+    announce('This site is still under construction','building');return false;
+  }
+  function mutate(ok,next,text){
+    if(!ok){announce('That option is unavailable','info');return false;}
+    O.refresh(s);dirty=true;save();
+    if(text)announce(text);
+    if(next)next();
     return true;
   }
-  function navigate(dest){
-    tab=dest;selected=null;dismiss();render();window.scrollTo(0,0);$('#main').focus({preventScroll:true});
+  function waypoint(type){
+    if(type==='lot'){
+      if(s.site)change(s.region);
+      close();
+      const st=s.map.stations.find(p=>p.id.startsWith('lot-')&&!p.business);
+      if(st){guide=st;O.aim(s,st);}
+      else announce('This block is full. Try the next block or district.','info');
+    }else{
+      const st=O.suggest(s,job);
+      if(st){guide=st;O.aim(s,st);}
+      else announce('Look for a waiting customer or an item to collect.','info');
+    }
   }
-  document.addEventListener('click',e=>{
-    const control=e.target.closest('[data-act]');
-    if(!control)return;
-    const now=Date.now();
-    if(lastAction&&now>=lastAction)g.played+=Math.floor(Math.min(60000,now-lastAction)/1000);
-    lastAction=now;
-    const [a,b,c]=control.dataset.args.split(',');
-    const n=Number(a), x=Number(b), y=Number(c);
-    const site=g.businesses.find(site=>site.id===n);
-    switch(control.dataset.act){
-      case 'nav':navigate(a);break;
-      case 'jobView':jobView(n);break;
-      case 'sideWork':open('work','Find a shift','<p class="intro">Jobs stay available while you build your portfolio.</p><div class="modal-buttons">'+C.jobs.map((job,i)=>btn(job.name,'jobView',[i],{class:'button outline',disabled:g.worked<[0,3,8][i]})).join('')+btn('Job equipment','tools')+'</div>');break;
-      case 'bulk':{const count=E.consolidate(g,region,a);mutate(count,count+' sites updated');break;}
-      case 'work':{
-        const earned=E.job(g,n,x);
-        if(mutate(earned!==false,'Shift complete · +'+money(earned),'work'))dismiss();
+  const number=v=>Number(v);
+  const navActions={play:close,portfolio,world:()=>{selection.region=s.region;districts();},research,finance};
+  document.addEventListener('click',event=>{
+    const button=event.target.closest('[data-action]');
+    if(!button||button.disabled)return;
+    const a=button.dataset.action,v=button.dataset.value,d=v.split(',');
+    if(Object.hasOwn(navActions,a))return navActions[a]();
+    switch(a){
+      case 'context':stationAction();break;
+      case 'inventory':open('inventory','Carried supplies',title(F.item[s.player.item]?.[0]||'Empty',s.player.count+' carried')+press('Empty hands','discard','','secondary full',!s.player.count));break;
+      case 'discard':if(mutate(O.discard(s),null,'Hands free'))close();break;
+      case 'guide':waypoint();break;
+      case 'findLot':waypoint('lot');break;
+      case 'job':job=v;guide=O.suggest(s,job);dirty=true;break;
+      case 'build':{
+        const built=O.acquire(s,number(v),selection.plot);
+        if(mutate(built,null,built?'Construction started for '+C.businesses[built.type].name:''))close();
         break;
       }
-      case 'tools':toolView();break;
-      case 'tool':if(mutate(E.tool(g,n),'Equipment upgraded','buy'))toolView();break;
-      case 'policy':g.policy=n;save();render();break;
-      case 'closePeriod':{const result=E.close(g);mutate(result,result?(result.profit>=0?'Period closed · +':'Period closed · ')+money(result.profit):'');break;}
-      case 'claim':mutate(E.claim(g),'Client contract completed','buy');break;
-      case 'manage':selected=n;render();window.scrollTo(0,0);break;
-      case 'allBusinesses':navigate('Businesses');break;
-      case 'buy':{const bought=E.buy(g,n,region);if(bought){selected=bought.id;window.scrollTo(0,0);}mutate(bought,bought?C.businesses[n].name+' opened':'','buy');break;}
-      case 'improve':if(site)mutate(E.improve(g,site,b,y),'Operations improved','buy');break;
-      case 'sign':if(site)mutate(E.sign(g,site,x),'Partnership signed','buy');break;
-      case 'merger':mutate(E.acquireRival(g,n,x),'Regional stake acquired','buy');break;
-      case 'sellPrompt':if(site)open('sell','Sell '+C.businesses[site.type].name+'?','<p class="intro">Sale proceeds '+money(Math.round(E.value(site,g)*.87))+'. The business, crew and upgrades transfer to the buyer.</p>'+btn('Confirm sale','sell',[n],{class:'button primary full'}));break;
-      case 'sell':if(site){selected=null;dismiss();mutate(E.sell(g,site),'Business sold');}break;
-      case 'region':region=n;render();break;
-      case 'permit':mutate(E.unlock(g,n),C.regions[n].name+' permit acquired','buy');break;
-      case 'openRegion':region=n;navigate('Businesses');break;
-      case 'branch':branch=n;render();break;
-      case 'study':mutate(E.study(g,n),'Research completed','buy');break;
-      case 'project':mutate(E.project(g,n),'Corporate project completed','win');break;
-      case 'capital':{
-        const max={loan:E.credit(g),repay:Math.min(g.debt,g.cash),property:g.cash,liquidate:g.property}[a];
-        open('capital',({loan:'Borrow capital',repay:'Repay debt',property:'Invest in property',liquidate:'Sell property'})[a],'<label class="select-label">Amount in dollars <input type="number" id="amount" min=".01" step=".01" max="'+(max/100)+'" value="'+(max/100)+'" inputmode="decimal"></label>'+btn('Confirm','capitalApply',[a],{class:'button primary full'}));break;
+      case 'tool':mutate(E.tool(g,number(v)),tools,'Equipment upgraded');break;
+      case 'townUpgrade':if(mutate(O.upgradeTown(s),null,'Stand upgraded'))close();break;
+      case 'manage':manage(number(v));break;
+      case 'visit':{const b=g.businesses.find(p=>p.id===number(v));if(b&&(b.region===s.region||g.businesses.length>=2))change(b.region,b.id);break;}
+      case 'improve':{
+        const b=g.businesses.find(p=>p.id===number(d[0]));
+        if(b){
+          const old=modal;
+          const ok=E.improve(g,b,d[1],number(d[2]));
+          if(ok&&d[1]==='upgrade'&&number(d[2])===1)O.startFitout(s,b);
+          if(mutate(ok,old==='manage'?()=>manage(b.id):null,d[1]==='hire'?'Worker hired':d[1]==='upgrade'&&number(d[2])===1?'Facility expanded':'Business upgraded')&&old==='expansion'){
+            close();sound('build');
+          }
+        }
+        break;
       }
-      case 'capitalApply':{
-        const amount=Math.round(Number($('#amount').value)*100);
-        if(mutate(E.finance(g,a,amount),'Capital transaction complete'))dismiss();break;
+      case 'blueprint':mutate(O.blueprintLayout(s,number(v)),()=>manage(s.site),'Layout updated');break;
+      case 'sign':{
+        const b=g.businesses.find(p=>p.id===number(d[0]));
+        if(b)mutate(E.sign(g,b,number(d[1])),()=>manage(b.id),'Partnership signed');break;
       }
-      case 'settings':settings();break;
-      case 'campaigns':campaigns();break;
-      case 'awards':awards();break;
-      case 'dismiss':dismiss();break;
-      case 'save':save();notify(S.persistent()?'Campaign saved':'Saved for this session. Export for a permanent copy.');break;
-      case 'load':{save();const away=loadSlot(n);navigate('Empire');offlineDialog(away);break;}
-      case 'newPrompt':newPrompt(n,x);break;
+      case 'sellPrompt':{
+        const b=g.businesses.find(p=>p.id===number(v));
+        if(b)open('sell','Sell '+C.businesses[b.type].name+'?',title('Sale proceeds · '+money(Math.round(E.value(b,g)*.87)),'The crew, business and equipment transfer out of your portfolio.')+
+          press('Confirm sale','sell',b.id,'danger full'));break;
+      }
+      case 'sell':{
+        const b=g.businesses.find(p=>p.id===number(v));
+        if(b&&E.sell(g,b)){
+          delete s.sites[b.id];
+          if(s.site===b.id)change(b.region);else mutate(true,portfolio,'Business sold');
+        }
+        break;
+      }
+      case 'region':selection.region=number(v);districts();break;
+      case 'travelTo':if(s.region===number(v)||g.businesses.length>=2||s.focus?.id==='travel')change(number(v));break;
+      case 'permit':mutate(E.unlock(g,number(v)),districts,'District permit acquired');break;
+      case 'stake':mutate(E.acquireRival(g,number(d[0]),number(d[1])),districts,'Rival stake acquired');break;
+      case 'branch':selection.branch=number(v);research();break;
+      case 'study':mutate(E.study(g,number(v)),research,'Research completed');break;
+      case 'policy':g.policy=number(v);mutate(true,finance,'Operating policy updated');break;
+      case 'claim':mutate(E.claim(g),finance,'Contract completed');break;
+      case 'project':mutate(E.project(g,number(v)),finance,'Corporate project completed');break;
+      case 'capital':capital(v);break;
+      case 'capitalApply':mutate(E.finance(g,v,Math.round(Number($('#amount').value)*100)),finance,'Capital transaction complete');break;
+      case 'settings':preferences();break;
+      case 'slots':slots();break;
+      case 'newPrompt':campaignOffer(number(d[0]),d[1]==='1');break;
       case 'newGame':{
-        const mode=$('#difficulty').value, challenge=Number($('#challenge').value), start=Number($('#start-region')?.value||0);
-        save();opts.slot=slotRequest;g=E.newGame(Date.now(),mode,challenge,n?opts.legacy:0,start);region=g.home;
-        save();navigate('Empire');notify('Campaign started');break;
+        const mode=$('#difficulty').value,id=number($('#challenge').value),home=number($('#home')?.value??'0');
+        const next=E.newGame(Date.now(),mode,id,selection.plus?settings.legacy:0,home);
+        save();close();load(selection.slot,next);layout();break;
       }
-      case 'deletePrompt':open('delete','Delete slot '+(n+1)+'?','<p class="intro">This removes both the save and its backup.</p>'+btn('Delete campaign','erase',[n],{class:'button primary full'}));break;
-      case 'erase':if(n!==opts.slot&&n>=0&&n<=2){S.erase(n);campaigns();notify('Slot deleted');}break;
+      case 'load':{save();close();const note=load(number(v));layout();offline(note);break;}
+      case 'deletePrompt':open('delete','Delete slot '+(number(v)+1)+'?',title('Delete campaign and backup','This permanently clears the selected slot.')+press('Delete campaign','delete',v,'danger full'));break;
+      case 'delete':if([0,1,2].includes(number(v))&&number(v)!==settings.slot){S.erase(number(v));slots();announce('Campaign deleted');}break;
+      case 'save':save();announce(S.persistent()?'Campaign saved':'Saved for this tab');break;
       case 'export':{
-        save();open('export','Export campaign','<p class="intro">Copy the portable save to keep it or move it between browsers.</p><textarea id="save-text" aria-label="Campaign save" readonly></textarea>'+btn('Download JSON save','exportFile',[],{class:'button outline full'}));
+        save();open('export','Export save','<p class="muted">Copy the save below or download the JSON file.</p><textarea id="save-text" readonly aria-label="Campaign JSON"></textarea>'+press('Download JSON','download','','secondary full'));
         $('#save-text').value=S.encode(g);$('#save-text').select();break;
       }
-      case 'exportFile':{
-        const url=URL.createObjectURL(new Blob([S.encode(g)],{type:'application/json'}));
-        const a=document.createElement('a');a.href=url;a.download='billion-slot-'+(opts.slot+1)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;
+      case 'download':{
+        const file=URL.createObjectURL(new Blob([S.encode(g)],{type:'application/json'}));
+        const link=document.createElement('a');link.href=file;link.download='billion-campaign-'+(settings.slot+1)+'.json';link.click();
+        setTimeout(()=>URL.revokeObjectURL(file),1000);break;
       }
-      case 'import':open('import','Import campaign','<p class="intro">Paste an exported save. A valid import replaces the current slot and preserves the previous save as a backup.</p><textarea id="import-text" aria-label="Paste a campaign save"></textarea>'+btn('Replace current campaign','applyImport',[],{class:'button primary full'}));break;
-      case 'applyImport':{
-        const data=S.decode($('#import-text').value.trim());
-        if(!data){notify('That save is invalid or damaged.');break;}
-        g=data;region=g.home;save();navigate('Empire');notify('Campaign imported');break;
+      case 'import':open('import','Import save','<p class="muted">Paste exported campaign JSON to replace the current slot. Its previous version is retained as a backup.</p><textarea id="save-text" aria-label="Paste campaign JSON"></textarea>'+press('Replace this slot','importApply','','primary full'));break;
+      case 'importApply':{
+        const data=S.decode($('#save-text').value.trim());
+        if(!data){announce('The save could not be read','info');break;}
+        close();load(settings.slot,data);layout();announce('Campaign imported');break;
       }
-      case 'help':open('help','How to play','<div class="help-copy"><p><strong>Shifts.</strong> Use the local forecast to select a job. Spend earnings on a kit or save for a business.</p><p><strong>Trading periods.</strong> Open Empire, compare operating plans and close the period. Each close settles income and bills. You can trade at your own pace. You can still work shifts through the Trading desk.</p><p><strong>Profit and net worth.</strong> Profit is revenue minus expenses. Net worth is cash plus property and conservatively valued businesses, less debt.</p><p><strong>Capacity and demand.</strong> Customers beyond capacity can lower reputation. When you have spare capacity, consider marketing or a price change.</p><p><strong>Expansion.</strong> Hire and automate, research technologies, take contracts and unlock new markets. Automation earns limited income while away.</p><p><strong>Winning.</strong> Reach $1 billion with at least two businesses, positive trading profit and debt below 20% of net worth. A challenge may add objective requirements.</p></div>');break;
+      case 'achievements':achievements();break;
+      case 'help':help();break;
+      case 'dismiss':close();break;
     }
   });
-  document.addEventListener('change',e=>{
-    const el=e.target;
-    if(el.id==='challenge'){$('#challenge-desc').textContent=C.challenges[Number(el.value)]?.[1]||'Choose your own industry and expansion plan.';return;}
-    switch(el.dataset.field){
-      case 'region':region=Number(el.value);render();break;
-      case 'price':{const b=g.businesses.find(b=>b.id===selected);if(b){b.price=Number(el.value);mutate(true,'Pricing updated');}break;}
-      case 'music':opts.music=Number(el.value);S.settings(opts);music();break;
-      case 'fx':opts.fx=Number(el.value);S.settings(opts);sound();break;
-      case 'motion':opts.motion=el.checked;save();render();break;
-      case 'tutorial':g.skipTutorial=el.checked;save();render();break;
+  document.addEventListener('change',event=>{
+    const target=event.target,v=Number(target.value);
+    if(target.id==='challenge')$('#challenge-copy').textContent=C.challenges[v]?.[1]||'Choose any industry and expansion plan.';
+    if(target.dataset.field==='sector'){selection.sector=v;construction();}
+    if(target.dataset.field==='price'){
+      const b=g.businesses.find(p=>p.id===selection.site);
+      if(b&&[0,1,2].includes(v)){b.price=v;mutate(true,()=>manage(b.id),'Pricing updated');}
     }
+    if(target.dataset.field==='sound'&&Number.isFinite(v)){settings.sound=v;S.settings(settings);sound('tap');}
+    if(target.dataset.field==='motion'){settings.motion=target.checked;S.settings(settings);}
   });
+  dialog.addEventListener('close',()=>{modal='';});
+  const direction={w:[0,-1],a:[-1,0],s:[0,1],d:[1,0],arrowup:[0,-1],arrowleft:[-1,0],arrowdown:[0,1],arrowright:[1,0]};
+  document.addEventListener('keydown',event=>{
+    if(dialog.open||event.ctrlKey||event.metaKey||event.altKey)return;
+    const key=event.key.toLowerCase();
+    if(direction[key]){event.preventDefault();keys.add(key);}
+    else if(key==='e'&&!event.repeat){event.preventDefault();stationAction();}
+  });
+  document.addEventListener('keyup',event=>keys.delete(event.key.toLowerCase()));
+  function stopDrag(){
+    drag=null;input.x=0;input.y=0;$('#joystick').style.removeProperty('--dx');$('#joystick').style.removeProperty('--dy');
+  }
+  window.addEventListener('blur',()=>{keys.clear();stopDrag();});
+  window.addEventListener('pagehide',save);
   document.addEventListener('visibilitychange',()=>{
-    if(document.hidden){awayAt=Date.now();lastAction=0;save();clearInterval(score);score=null;}
-    else if(awayAt){
-      music();
-      const result=E.offline(g,Date.now()-Math.max(awayAt,g.stamp));awayAt=0;save();render();offlineDialog(result);
+    if(document.hidden){
+      hiddenAt=Date.now();keys.clear();stopDrag();save();last=0;
+    }else if(hiddenAt){
+      const note=O.fieldOffline(g,Date.now()-Math.max(hiddenAt,g.stamp));
+      hiddenAt=0;s.cache.clear();last=0;dirty=true;save();offline(note);
     }
   });
-  window.addEventListener('pagehide',()=>{if(!awayAt)save();});
-  document.addEventListener('pointerdown',()=>{if(opts.music&&!score)music();},{once:true});
-  const pending=loadSlot([0,1,2].includes(opts.slot)?opts.slot:0);
-  render();offlineDialog(pending);
+  function coordinate(event){
+    const r=canvas.getBoundingClientRect();
+    return renderer.worldPoint(event.clientX-r.left,event.clientY-r.top);
+  }
+  function begin(event){
+    if(dialog.open||drag||event.button>0)return;
+    if(event.target===canvas)canvas.focus({preventScroll:true});
+    const origin=event.currentTarget.id==='joystick'?'joystick':'world';
+    const box=event.currentTarget.getBoundingClientRect();
+    const center=origin==='joystick'?[box.left+box.width/2,box.top+box.height/2]:[event.clientX,event.clientY];
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    drag={id:event.pointerId,x:center[0],y:center[1],moved:false,origin};
+    if(origin==='joystick')dragMove(event);
+    event.preventDefault();
+  }
+  function dragMove(event){
+    if(drag?.id!==event.pointerId)return;
+    const dx=event.clientX-drag.x,dy=event.clientY-drag.y;
+    const distance=Math.hypot(dx,dy),d=Math.max(38,distance);
+    if(distance>7)drag.moved=true;
+    if(!drag.moved)return;
+    input.x=dx/d;input.y=dy/d;
+    $('#joystick').style.setProperty('--dx',input.x*17+'px');
+    $('#joystick').style.setProperty('--dy',input.y*17+'px');
+  }
+  function end(event){
+    if(drag?.id!==event.pointerId)return;
+    if(!drag.moved&&drag.origin==='world'&&event.type==='pointerup'){
+      const p=coordinate(event);
+      const near=s.map.stations.filter(st=>Math.hypot(st.x-p.x,st.y-p.y)<30).sort((a,b)=>Math.hypot(a.x-p.x,a.y-p.y)-Math.hypot(b.x-p.x,b.y-p.y))[0];
+      if(near&&near.kind==='action'&&s.focus?.id===near.id)stationAction();
+      else if(near){O.aim(s,near);guide=near;}
+      else{
+        const land={x:Math.max(40,Math.min(920,p.x)),y:Math.max(152,Math.min(596,p.y))};
+        if(O.clear(s.map,land.x,land.y,8))s.player.path=O.route(s.map,s.player,land);
+      }
+    }
+    stopDrag();
+  }
+  for(const el of [canvas,$('#joystick')]){
+    el.addEventListener('pointerdown',begin);el.addEventListener('pointermove',dragMove);
+    el.addEventListener('pointerup',end);el.addEventListener('pointercancel',end);el.addEventListener('lostpointercapture',stopDrag);
+  }
+  function loop(now){
+    const dt=last?Math.min(.25,(now-last)/1000):0;
+    last=now;
+    if(!document.hidden){
+      if(!dialog.open){
+        acc+=dt;
+        let x=input.x,y=input.y;
+        for(const k of keys){x+=direction[k][0];y+=direction[k][1];}
+        const m=Math.max(1,Math.hypot(x,y));
+        while(acc>=O.STEP){O.step(s,{x:x/m,y:y/m});acc-=O.STEP;}
+        if(x||y)guide=null;
+        guideClock+=dt;autosaveClock+=dt;
+        if(guideClock>.30){
+          guideClock=0;
+          if(!s.player.path?.length)guide=O.suggest(s,job)||null;
+        }
+        if(autosaveClock>8){autosaveClock=0;save();}
+      }
+      hudClock+=dt;
+      if(hudClock>.18){hudClock=0;wins();renderChrome();}
+      renderer.draw(s,dt,{guide,motion:settings.motion&&!reduced.matches,still:!settings.motion||reduced.matches});
+    }
+    requestAnimationFrame(loop);
+  }
+  const saved=load(settings.slot);
+  layout();offline(saved);
+  requestAnimationFrame(loop);
 })();

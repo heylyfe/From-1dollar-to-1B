@@ -45,13 +45,13 @@ globalThis.Saves = (() => {
   }
   function encode(game){
     const payload=JSON.stringify(game);
-    return JSON.stringify({version:2,checksum:hash(payload),payload});
+    return JSON.stringify({version:3,checksum:hash(payload),payload});
   }
   function decode(raw){
     if(typeof raw!=='string'||raw.length>600000)return null;
     try{
       const envelope=JSON.parse(raw);
-      if(![1,2].includes(envelope.version)||typeof envelope.payload!=='string'||hash(envelope.payload)!==envelope.checksum)return null;
+      if(![1,2,3].includes(envelope.version)||typeof envelope.payload!=='string'||hash(envelope.payload)!==envelope.checksum)return null;
       let game=JSON.parse(envelope.payload);
       if(envelope.version===1&&game)game={...Economy.newGame(game.seed),...game};
       if(game&&!Number.isSafeInteger(game.played))game.played=0;

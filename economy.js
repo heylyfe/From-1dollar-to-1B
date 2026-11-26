@@ -293,7 +293,7 @@ globalThis.Economy = (() => {
     g.projects.push(i);g.points-=p[3];g.property+=round(p[2]*.89);update(g);return true;
   }
   function qualified(g,net=worth(g)){
-    if(net<100000000000||g.businesses.length<2||g.debt>net*.20||aggregate(g).profit<=0)return false;
+    if(net<100000000000||g.businesses.length<2||g.debt>net*.20||aggregate(g).profit<=0||(g.realTime&&g.last.profit<=0))return false;
     if(g.challenge===7&&(!g.businesses.some(b=>C.businesses[b.type].sector===6)||!g.businesses.every(b=>b.up[6]>=2)))return false;
     return g.challenge!==9||new Set(g.businesses.map(b=>b.region)).size>=6;
   }
@@ -314,5 +314,5 @@ globalThis.Economy = (() => {
     ['Strong comeback',0,g=>g.recovery>0&&g.debt===0&&g.peak>=100000],
     ['Highly rated',0,g=>g.businesses.some(b=>b.rep===100)],['Corporate architect',0,g=>g.projects.length>=3]
   ];
-  return {rules,upgrades,projects,achievements,newGame,worth,value,getTerms,quote,canBuy,buy,job,toolCost,tool,upgradeCost,hireCost,channelCost,improve,close,aggregate,offline,unlock,study,sell,finance,credit,contract,claim,project,level,qualified,update,consolidate,deals,dealQuote,sign,mergerQuote,acquireRival};
+  return {rules,upgrades,projects,achievements,newGame,worth,value,getTerms,quote,canBuy,buy,job,toolCost,tool,upgradeCost,hireCost,channelCost,improve,close,aggregate,offline,unlock,study,sell,finance,credit,contract,claim,project,level,qualified,update,pay,consolidate,deals,dealQuote,sign,mergerQuote,acquireRival};
 })();

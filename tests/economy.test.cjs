@@ -135,7 +135,7 @@ test('catalog meets content minimums and strategies can complete using the share
   assert.equal(C.research.length,56);
   assert.equal(C.challenges.length,10);
   assert.ok(E.achievements.length>=75);
-  const {campaign,profiles}=require('./simulate.cjs');
+  const {campaign,profiles}=require('./legacy-simulate.cjs');
   for(const name of ['Optimised','Hospitality','Technology','Manufacturing','Retail','Diversified']){
     const result=campaign(42,profiles.find(p=>p[0]===name));
     assert.ok(result.won,name+' reached '+result.worth);
